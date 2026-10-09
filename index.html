@@ -110,6 +110,7 @@ h1 em { color: var(--gilt); }
 }
 .rail button:hover, label.file:hover { border-color: var(--gilt); }
 .rail button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); min-width: 96px; }
+.rail button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
 .rail button[aria-pressed="true"] { background: var(--gilt); border-color: var(--gilt); color: var(--surface); }
 .stage.line canvas { cursor: ew-resize; }
 /* While holding chords, the lane owns every touch gesture so the page doesn't scroll under the finger. */
@@ -168,6 +169,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       <button class="primary" id="play" type="button">Play</button>
       <button id="restart" type="button">Restart</button>
       <button id="hold" type="button" aria-pressed="false" title="While paused, sustain every note under the line">Hold chord</button>
+      <button id="arp" type="button" disabled title="Play the held chord one note at a time, low to high (A)">Arpeggio</button>
     </div>
     <label class="group ctl" for="tempo">Speed <input id="tempo" type="range" min="25" max="200" step="5" value="100"><output id="tempoOut">100%</output></label>
     <label class="group ctl" for="zoom">Zoom <input id="zoom" type="range" min="50" max="340" value="150"></label>
@@ -183,7 +185,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     <div>
       <h2>Playing it</h2>
       <p>Hover over any note to hear it. Click a voice above to hide and mute it. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar, <kbd>Home</kbd> goes back to the start.</p>
-      <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar.</p>
+      <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) plays the held chord one note at a time, from the bottom up.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
     <div>
@@ -395,7 +397,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   }
 
   // ---------- Audio: a breathy flute and a bowed string voice ----------
-  let ctx = null, master = null, heldBus = null, noiseBuf = null;
+  let ctx = null, master = null, heldBus = null, duck = null, noiseBuf = null;
   const voices = new Set();
   const vol = () => (Number($("vol").value) / 100) ** 1.5;
 
@@ -414,7 +416,8 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       master.connect(comp).connect(lim).connect(ctx.destination);
       // Held chords get their own bus, turned down as the chord grows (doubled notes add up fast).
       heldBus = ctx.createGain();
-      heldBus.connect(master);
+      duck = ctx.createGain();   // dips the held chord while an arpeggio plays over it
+      heldBus.connect(duck).connect(master);
       noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
       const ch = noiseBuf.getChannelData(0);
       for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
@@ -556,6 +559,22 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       }
     }
     return out;
+  }
+
+  // Arpeggio: the held chord one pitch at a time, low to high, each in its own voice's sound.
+  const ARP_STEP = 0.17;
+  let arp = null;   // { at, notes } in audio-clock seconds, for the outline in draw()
+  function arpeggiate() {
+    if (!holdMode || playing || !chord.size || !ensureAudio()) return;
+    const byPitch = new Map();
+    for (const n of [...chord].sort((a, b) => a.midi - b.midi || (a.tr.kind === "wind") - (b.tr.kind === "wind"))) if (!byPitch.has(n.midi)) byPitch.set(n.midi, n);
+    const list = [...byPitch.values()], at = ctx.currentTime + 0.03;
+    list.forEach((n, i) => voice(n.midi, at + i * ARP_STEP, 0.5, 0.85, n.tr.kind));
+    const endAt = at + list.length * ARP_STEP + 0.3;
+    duck.gain.cancelScheduledValues(ctx.currentTime);
+    duck.gain.setTargetAtTime(0.3, ctx.currentTime, 0.04);
+    duck.gain.setTargetAtTime(1, endAt, 0.15);
+    arp = { at, notes: list };
   }
 
   function releaseHeld() {
@@ -769,6 +788,12 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     const r = Math.max(Math.min(lh / 2 - 1, 6), 1);
     const h = Math.max(lh - 2, 2);
     let lead = null, top = null;
+    // The arpeggio's current pitch gets an outline (on every note of that pitch in the chord).
+    let arpMidi = null;
+    if (arp && ctx) {
+      const i = Math.floor((ctx.currentTime - arp.at) / ARP_STEP);
+      if (i >= 0 && i < arp.notes.length) arpMidi = arp.notes[i].midi; else if (i >= arp.notes.length) arp = null;
+    }
     c.textAlign = "center";
     c.font = `500 ${Math.min(11, h - 3)}px 'IBM Plex Mono', monospace`;
     for (let t = song.tracks.length - 1; t >= 0; t--) {
@@ -786,7 +811,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
         c.globalAlpha = past ? 0.3 : active ? 1 : 0.82;
         c.beginPath(); c.roundRect(x, y, w, h, r); c.fill();
         c.shadowBlur = 0; c.globalAlpha = 1;
-        if (n === hover) { c.strokeStyle = colors.ink; c.lineWidth = 2; c.stroke(); }
+        if (n === hover || (arpMidi === n.midi && chord.has(n))) { c.strokeStyle = colors.ink; c.lineWidth = 2; c.stroke(); }
         if (w > 30 && h >= 13) { c.fillStyle = colors.surface; c.fillText(noteName(n.midi), x + w / 2, y + h / 2 + 0.5); }
       }
     }
@@ -937,6 +962,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       const now = beatNow(), i = barIdx(now);
       seek(song.bars[now - song.bars[i].start > 0.25 || i === 0 ? i : i - 1].start);
     }
+    else if (e.code === "KeyA" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); arpeggiate(); }
     else if (e.code === "Home") { e.preventDefault(); seek(startBeat - 0.25); }
   });
 
@@ -947,8 +973,10 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     holdMode = !holdMode;
     e.currentTarget.setAttribute("aria-pressed", String(holdMode));
     stage.classList.toggle("holding", holdMode);
+    $("arp").disabled = !holdMode;
     if (holdMode) { ensureAudio(); pause(); }
   });
+  $("arp").addEventListener("click", arpeggiate);
   $("tempo").addEventListener("input", e => setSpeed(Number(e.target.value)));
   $("zoom").addEventListener("input", e => { pxPerBeat = Number(e.target.value); });
   $("vol").addEventListener("input", () => { if (master) master.gain.setTargetAtTime(vol(), ctx.currentTime, 0.02); });

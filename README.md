@@ -19,6 +19,6 @@ MIDI files rarely mark an upbeat. If the first note isn't on a barline, the app 
 ## Controls
 
 - Hover a note to hear it, or click/tap it
-- **Hold chord** (while paused): every note under the line sustains until the line leaves it, so you can hear the harmony. Drag the line itself, or drag the score under it. `←` `→` step from chord to chord, `Shift` + `←` `→` jump a bar
+- **Hold chord** (while paused): every note under the line sustains until the line leaves it, so you can hear the harmony. Drag the line itself, or drag the score under it. `←` `→` step from chord to chord, `Shift` + `←` `→` jump a bar. **Arpeggio** (or `A`) plays the held chord one note at a time, low to high
 - `Space`: play/pause · `←` `→`: jump a bar · `Home`: back to the start
 - Tempo, zoom, volume and loop are in the control rail
