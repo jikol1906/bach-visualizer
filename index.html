@@ -169,7 +169,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       <button class="primary" id="play" type="button">Play</button>
       <button id="restart" type="button">Restart</button>
       <button id="hold" type="button" aria-pressed="false" title="While paused, sustain every note under the line">Hold chord</button>
-      <button id="arp" type="button" disabled title="Play the held chord one note at a time, low to high (A)">Arpeggio</button>
+      <button id="arp" type="button" disabled aria-pressed="false" title="Keep arpeggiating the held chord, up and down (A)">Arpeggio</button>
     </div>
     <label class="group ctl" for="tempo">Speed <input id="tempo" type="range" min="25" max="200" step="5" value="100"><output id="tempoOut">100%</output></label>
     <label class="group ctl" for="zoom">Zoom <input id="zoom" type="range" min="50" max="340" value="150"></label>
@@ -185,7 +185,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     <div>
       <h2>Playing it</h2>
       <p>Hover over any note to hear it. Click a voice above to hide and mute it. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar, <kbd>Home</kbd> goes back to the start.</p>
-      <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) plays the held chord one note at a time, from the bottom up.</p>
+      <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
     <div>
@@ -561,20 +561,33 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     return out;
   }
 
-  // Arpeggio: the held chord one pitch at a time, low to high, each in its own voice's sound.
+  // Arpeggio toggle: while on, cycle through the held chord up and back down (turning without repeating
+  // the top or bottom note), one pitch per step, each in its own voice's sound. It follows the chord as
+  // the line moves, and the sustained chord ducks underneath.
   const ARP_STEP = 0.17;
-  let arp = null;   // { at, notes } in audio-clock seconds, for the outline in draw()
-  function arpeggiate() {
-    if (!holdMode || playing || !chord.size || !ensureAudio()) return;
+  let arpOn = false, arpK = 0, arpMidi = null, arpTimer = null, ducked = false;
+  function arpList() {
     const byPitch = new Map();
     for (const n of [...chord].sort((a, b) => a.midi - b.midi || (a.tr.kind === "wind") - (b.tr.kind === "wind"))) if (!byPitch.has(n.midi)) byPitch.set(n.midi, n);
-    const list = [...byPitch.values()], at = ctx.currentTime + 0.03;
-    list.forEach((n, i) => voice(n.midi, at + i * ARP_STEP, 0.5, 0.85, n.tr.kind));
-    const endAt = at + list.length * ARP_STEP + 0.3;
-    duck.gain.cancelScheduledValues(ctx.currentTime);
-    duck.gain.setTargetAtTime(0.3, ctx.currentTime, 0.04);
-    duck.gain.setTargetAtTime(1, endAt, 0.15);
-    arp = { at, notes: list };
+    return [...byPitch.values()];
+  }
+  function arpTick() {
+    const live = arpOn && holdMode && !playing && chord.size && ctx && ctx.state === "running";
+    if (live !== ducked && ctx) { duck.gain.setTargetAtTime(live ? 0.3 : 1, ctx.currentTime, 0.06); ducked = live; }
+    if (!live) { arpMidi = null; return; }
+    const list = arpList();
+    const seq = list.length < 2 ? list : list.concat(list.slice(1, -1).reverse());   // up, then down
+    const n = seq[arpK++ % seq.length];
+    voice(n.midi, ctx.currentTime + 0.01, 0.45, 0.85, n.tr.kind);
+    arpMidi = n.midi;
+  }
+  function setArp(on) {
+    arpOn = on;
+    $("arp").setAttribute("aria-pressed", String(on));
+    clearInterval(arpTimer);
+    arpK = 0;
+    if (on) { ensureAudio(); arpTimer = setInterval(arpTick, ARP_STEP * 1000); arpTick(); }
+    else arpTick();
   }
 
   function releaseHeld() {
@@ -788,12 +801,6 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     const r = Math.max(Math.min(lh / 2 - 1, 6), 1);
     const h = Math.max(lh - 2, 2);
     let lead = null, top = null;
-    // The arpeggio's current pitch gets an outline (on every note of that pitch in the chord).
-    let arpMidi = null;
-    if (arp && ctx) {
-      const i = Math.floor((ctx.currentTime - arp.at) / ARP_STEP);
-      if (i >= 0 && i < arp.notes.length) arpMidi = arp.notes[i].midi; else if (i >= arp.notes.length) arp = null;
-    }
     c.textAlign = "center";
     c.font = `500 ${Math.min(11, h - 3)}px 'IBM Plex Mono', monospace`;
     for (let t = song.tracks.length - 1; t >= 0; t--) {
@@ -962,7 +969,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       const now = beatNow(), i = barIdx(now);
       seek(song.bars[now - song.bars[i].start > 0.25 || i === 0 ? i : i - 1].start);
     }
-    else if (e.code === "KeyA" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); arpeggiate(); }
+    else if (e.code === "KeyA" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (holdMode) setArp(!arpOn); }
     else if (e.code === "Home") { e.preventDefault(); seek(startBeat - 0.25); }
   });
 
@@ -974,9 +981,10 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     e.currentTarget.setAttribute("aria-pressed", String(holdMode));
     stage.classList.toggle("holding", holdMode);
     $("arp").disabled = !holdMode;
+    if (!holdMode) setArp(false);
     if (holdMode) { ensureAudio(); pause(); }
   });
-  $("arp").addEventListener("click", arpeggiate);
+  $("arp").addEventListener("click", () => setArp(!arpOn));
   $("tempo").addEventListener("input", e => setSpeed(Number(e.target.value)));
   $("zoom").addEventListener("input", e => { pxPerBeat = Number(e.target.value); });
   $("vol").addEventListener("input", () => { if (master) master.gain.setTargetAtTime(vol(), ctx.currentTime, 0.02); });
