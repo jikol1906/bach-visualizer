@@ -463,7 +463,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       master.connect(comp).connect(lim).connect(ctx.destination);
       // Held chords get their own bus, turned down as the chord grows (doubled notes add up fast).
       heldBus = ctx.createGain();
-      duck = ctx.createGain();   // dips the held chord while an arpeggio plays over it
+      duck = ctx.createGain();   // silences the held chord while the arpeggio plays it instead
       heldBus.connect(duck).connect(master);
       noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
       const ch = noiseBuf.getChannelData(0);
@@ -599,7 +599,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   // Arpeggio toggle: while on, cycle through the held chord up and back down (turning without repeating
   // the top or bottom note), one pitch per step, each in its own voice's sound. It follows the chord as
-  // the line moves, and the sustained chord ducks underneath.
+  // the line moves, and the sustained chord goes silent meanwhile.
   // Timed on the audio clock: a short look-ahead (60 ms) keeps notes even at high speeds while still
   // picking up a new chord almost at once when the line moves.
   const arpStep = () => 1 / Number($("arpRate").value);   // seconds per note
@@ -612,7 +612,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   }
   function arpTick() {
     const live = arpOn && holdMode && !playing && chord.size && ctx && ctx.state === "running";
-    if (live !== ducked && ctx) { duck.gain.setTargetAtTime(live ? 0.3 : 1, ctx.currentTime, 0.06); ducked = live; }
+    if (live !== ducked && ctx) { duck.gain.setTargetAtTime(live ? 0 : 1, ctx.currentTime, 0.05); ducked = live; }
     if (!live) { arpMidi = null; arpShown.length = 0; arpNext = 0; return; }
     const now = ctx.currentTime, step = arpStep();
     if (arpNext < now) arpNext = now + 0.01;
