@@ -10,7 +10,7 @@ The app ships with all seven movements, embedded as MIDI files from John Hamm's 
 
 Playback follows each file's tempo map (the Ouverture's fast section, the closing ritardandos) and time-signature changes. The speed slider scales all of it.
 
-Each voice gets its own colour and its own sound (a breathy flute, or a bowed string). Click a voice chip to hide and mute it.
+Each voice gets its own colour and its own sound (a breathy flute, or a bowed string). Click a voice chip to hide and mute it, or the ◎ next to it to put that voice in the spotlight: the others keep playing at about a third of the level and fade back in the picture.
 
 You can load any other MIDI file with **Load MIDI…** or by dragging it onto the lane. Each track becomes a voice. Tracks that share a name and channel are merged, because some files split the repeats across separate tracks.
 
