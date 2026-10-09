@@ -52,7 +52,9 @@ h1 { font-family: var(--display); font-weight: 400; font-size: clamp(2rem, 5vw, 
 h1 em { color: var(--gilt); }
 .byline { font-family: var(--display); font-style: italic; color: var(--muted); font-size: 1.05rem; margin: 4px 0 0; }
 .readout { font-family: var(--mono); font-size: .85rem; color: var(--muted); font-variant-numeric: tabular-nums; display: flex; gap: 16px; flex-wrap: wrap; }
-.readout b { color: var(--ink); font-weight: 500; }
+.readout b { color: var(--ink); font-weight: 500; display: inline-block; }
+/* Fixed widths so changing values never re-wrap the header and shift the lane. */
+#rdBar { min-width: 6ch; } #rdNote { min-width: 3ch; } #rdBpm { min-width: 3ch; }
 
 .movements { display: flex; flex-wrap: wrap; gap: 4px 18px; border-bottom: 1px solid var(--line); padding-bottom: 2px; }
 .movements button {
@@ -110,6 +112,15 @@ h1 em { color: var(--gilt); }
 .rail button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); min-width: 96px; }
 .rail button[aria-pressed="true"] { background: var(--gilt); border-color: var(--gilt); color: var(--surface); }
 .stage.line canvas { cursor: ew-resize; }
+/* While holding chords, the lane owns every touch gesture so the page doesn't scroll under the finger. */
+.stage.holding canvas { touch-action: none; }
+.chordtag {
+  position: absolute; top: 32px; right: 10px; z-index: 2; pointer-events: none;
+  max-width: calc(100% - 72px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 .8rem var(--mono); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--gilt); border-radius: 4px; padding: 3px 8px;
+}
+.chordtag span { color: var(--muted); margin-right: 6px; }
 label.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .ctl { font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .ctl output { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--ink); font-variant-numeric: tabular-nums; display: inline-block; min-width: 4.5ch; }
@@ -137,7 +148,6 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     <div class="readout" aria-live="off">
       <span>Bar <b id="rdBar">1</b></span>
       <span>Flute <b id="rdNote">–</b></span>
-      <span id="rdChordBox" hidden>Chord <b id="rdChord">–</b></span>
       <span>♩ = <b id="rdBpm">120</b></span>
     </div>
   </header>
@@ -149,6 +159,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   <div class="stage" id="stage">
     <canvas id="cv" aria-label="Scrolling piano roll of every voice. Hover a note to hear it."></canvas>
     <div class="tip" id="tip" hidden></div>
+    <div class="chordtag" id="rdChordBox" hidden><span>Chord</span><b id="rdChord">–</b></div>
     <button class="unlock" id="unlock" type="button">Click once to turn on sound</button>
   </div>
 
@@ -523,7 +534,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   let chord = new Set();
 
   // Notes under beat b in the voices that are on. A note counts until the next note in its voice starts
-  // (up to a quarter beat), so a voice doesn't drop out in the tiny gaps between detached notes.
+  // (up to one beat), so detached accompaniment and short rests don't punch holes in the harmony.
   function chordAt(b) {
     const out = new Set();
     for (const tr of song.tracks) {
@@ -532,7 +543,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       for (let i = firstAtOrAfter(ns, b - 16); i < ns.length && ns[i].start <= b + 1e-6; i++) {
         const n = ns[i], end = n.start + n.dur;
         const next = tr.mono && i + 1 < ns.length ? ns[i + 1].start : end;
-        if (b < Math.min(Math.max(end, next), end + 0.25)) out.add(n);
+        if (b < Math.min(Math.max(end, next), end + 1)) out.add(n);
       }
     }
     return out;
@@ -830,7 +841,8 @@ input[type="checkbox"] { accent-color: var(--gilt); }
 
   // ---------- Input ----------
   let dragging = false, lineDrag = false, downX = 0, downBeat = 0, moved = false;
-  const nearLine = x => !playing && x > GUTTER && Math.abs(x - playX()) <= 10;
+  // A fingertip needs a wider target than a mouse pointer.
+  const nearLine = (x, touch) => !playing && x > GUTTER && Math.abs(x - playX()) <= (touch ? 24 : 10);
 
   // Moving the line keeps the score still: the line's x and the beat under it change together.
   function moveLine(x) {
@@ -856,7 +868,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     ensureAudio();
     const r = cv.getBoundingClientRect(), x = e.clientX - r.left;
     cv.setPointerCapture(e.pointerId);
-    if (nearLine(x)) { lineDrag = true; hover = null; tip.hidden = true; return; }
+    if (nearLine(x, e.pointerType === "touch")) { lineDrag = true; hover = null; tip.hidden = true; return; }
     dragging = true; moved = false; downX = x; downBeat = beatNow();
     stage.classList.add("dragging");
   });
@@ -910,6 +922,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   $("hold").addEventListener("click", e => {
     holdMode = !holdMode;
     e.currentTarget.setAttribute("aria-pressed", String(holdMode));
+    stage.classList.toggle("holding", holdMode);
     if (holdMode) { ensureAudio(); pause(); }
   });
   $("tempo").addEventListener("input", e => setSpeed(Number(e.target.value)));
