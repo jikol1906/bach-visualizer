@@ -99,6 +99,8 @@ h1 em { color: var(--gilt); }
 }
 .rail button:hover, label.file:hover { border-color: var(--gilt); }
 .rail button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); min-width: 96px; }
+.rail button[aria-pressed="true"] { background: var(--gilt); border-color: var(--gilt); color: var(--surface); }
+.stage.line canvas { cursor: ew-resize; }
 label.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .ctl { font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .ctl output { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--ink); font-variant-numeric: tabular-nums; display: inline-block; min-width: 4.5ch; }
@@ -126,6 +128,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     <div class="readout" aria-live="off">
       <span>Bar <b id="rdBar">1</b></span>
       <span>Flute <b id="rdNote">–</b></span>
+      <span id="rdChordBox" hidden>Chord <b id="rdChord">–</b></span>
       <span>♩ = <b id="rdBpm">120</b></span>
     </div>
   </header>
@@ -142,6 +145,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     <div class="group">
       <button class="primary" id="play" type="button">Play</button>
       <button id="restart" type="button">Restart</button>
+      <button id="hold" type="button" aria-pressed="false" title="While paused, sustain every note under the line">Hold chord</button>
     </div>
     <label class="group ctl" for="tempo">Tempo <input id="tempo" type="range" min="40" max="180" value="120"><output id="tempoOut">120</output></label>
     <label class="group ctl" for="zoom">Zoom <input id="zoom" type="range" min="50" max="340" value="150"></label>
@@ -158,6 +162,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     <div>
       <h2>Playing it</h2>
       <p>Hover over any note to hear it. Click a voice above to hide and mute it. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar, <kbd>Home</kbd> goes back to the start.</p>
+      <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
     <div>
@@ -295,6 +300,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
 
   function loadSong(s, label) {
     stopAll();
+    releaseHeld();
     song = s; song.name = label || s.name;
     // Order voices high to low, the way a score lists them, and give the flute the gilt colour.
     const avg = tr => tr.notes.reduce((a, n) => a + n.midi, 0) / tr.notes.length;
@@ -347,17 +353,21 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     return true;
   }
 
+  // dur = Infinity makes a held voice: it sustains until release() is called on what this returns.
   function voice(midi, when, dur, vel = 0.8, kind = "wind") {
-    if (!ctx) return;
+    if (!ctx) return null;
     const f = 440 * 2 ** ((midi - 69) / 12);
-    const wind = kind === "wind";
+    const wind = kind === "wind", held = dur === Infinity;
     const d = Math.max(dur * 0.92, 0.06), atk = wind ? 0.025 : 0.04, rel = wind ? 0.08 : 0.12;
     const peak = (wind ? 0.2 : 0.075) * vel;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, when);
     g.gain.linearRampToValueAtTime(peak, when + atk);
-    g.gain.linearRampToValueAtTime(peak * 0.8, when + Math.max(atk + 0.01, d));
-    g.gain.linearRampToValueAtTime(0, when + d + rel);
+    if (held) g.gain.linearRampToValueAtTime(peak * 0.8, when + atk + 0.15);
+    else {
+      g.gain.linearRampToValueAtTime(peak * 0.8, when + Math.max(atk + 0.01, d));
+      g.gain.linearRampToValueAtTime(0, when + d + rel);
+    }
     g.connect(master);
 
     // Vibrato that only blooms on longer notes.
@@ -398,11 +408,61 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       }
     }
 
-    const stopAt = when + d + rel + 0.05;
     const v = { nodes, g };
+    if (held) {
+      // The breath noise is a one-second buffer, so let it play out once; the tones run until release.
+      for (const node of nodes) node.start(when);
+      if (wind) nodes[nodes.length - 1].stop(when + 0.2);
+      v.release = () => {
+        const now = ctx.currentTime;
+        g.gain.cancelScheduledValues(now);
+        g.gain.setValueAtTime(g.gain.value, now);
+        g.gain.linearRampToValueAtTime(0, now + 0.18);
+        for (const node of nodes) try { node.stop(now + 0.25); } catch (e) { /* already stopped */ }
+      };
+      return v;
+    }
+    const stopAt = when + d + rel + 0.05;
     for (const node of nodes) { node.start(when); node.stop(stopAt); }
     nodes[1].onended = () => voices.delete(v);
     voices.add(v);
+    return v;
+  }
+
+  // ---------- Hold chord: while paused, sustain everything under the line ----------
+  let holdMode = false;
+  const heldVoices = new Map();   // note -> held voice
+  let chord = new Set();
+
+  // Notes under beat b in the voices that are on. A note counts until the next note in its voice starts
+  // (up to a quarter beat), so a voice doesn't drop out in the tiny gaps between detached notes.
+  function chordAt(b) {
+    const out = new Set();
+    for (const tr of song.tracks) {
+      if (!tr.on) continue;
+      const ns = tr.notes;
+      for (let i = firstAtOrAfter(ns, b - 16); i < ns.length && ns[i].start <= b + 1e-6; i++) {
+        const n = ns[i], end = n.start + n.dur;
+        const next = tr.mono && i + 1 < ns.length ? ns[i + 1].start : end;
+        if (b < Math.min(Math.max(end, next), end + 0.25)) out.add(n);
+      }
+    }
+    return out;
+  }
+
+  function releaseHeld() {
+    for (const v of heldVoices.values()) v.release();
+    heldVoices.clear();
+  }
+
+  function updateChord() {
+    chord = holdMode && !playing ? chordAt(viewBeat) : new Set();
+    const audible = ctx && ctx.state === "running";
+    for (const [n, v] of heldVoices) if (!chord.has(n) || !audible) { v.release(); heldVoices.delete(n); }
+    if (audible) for (const n of chord) if (!heldVoices.has(n)) heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), n.tr.kind));
+    const label = chord.size ? [...chord].sort((a, b) => a.midi - b.midi).map(n => noteName(n.midi)).join(" ") : "–";
+    if ($("rdChord").textContent !== label) $("rdChord").textContent = label;
+    $("rdChordBox").hidden = !holdMode;
   }
 
   function stopAll() {
@@ -477,6 +537,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   let W = 0, H = 0, dpr = 1;
   const GUTTER = 52, TOP = 26, BOTTOM = 10;
   let pxPerBeat = 150, hover = null, pointer = null, colors = {};
+  let headFrac = 0.25;   // where the line sits across the lane; it can be dragged while paused
 
   function readColors() {
     const cs = getComputedStyle(document.documentElement);
@@ -494,14 +555,14 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   }
   new ResizeObserver(resize).observe(cv);
 
-  const playX = () => GUTTER + (W - GUTTER) * 0.25;
+  const playX = () => GUTTER + (W - GUTTER) * headFrac;
   const laneH = () => (H - TOP - BOTTOM) / (hi - lo + 1);
   const yOf = m => TOP + (hi - m) * laneH();
   const xOf = (b, now) => playX() + (b - now) * pxPerBeat;
 
   function barInfo(b) {
     const rel = b - song.origin, bpb = song.beatsPerBar;
-    const bar = Math.floor(rel / bpb + 1e-6) + 1;
+    const bar = Math.floor((rel + 0.0625) / bpb) + 1;   // a 32nd of slack, since played MIDI lands a hair early
     const beat = rel - (bar - 1) * bpb + 1;
     return { bar, beat: Math.round(beat * 100) / 100 };
   }
@@ -511,6 +572,8 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   function draw() {
     requestAnimationFrame(draw);
     if (!W || !song) return;
+    updateChord();
+    const holding = holdMode && !playing;
     const now = beatNow();
     const c = g2, lh = laneH(), px = playX();
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -570,8 +633,8 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       for (let i = firstAtOrAfter(tr.notes, b0 - 8); i < tr.notes.length && tr.notes[i].start < b1; i++) {
         const n = tr.notes[i], x = xOf(n.start, now), w = Math.max(n.dur * pxPerBeat - 3, 3), y = yOf(n.midi) + 1;
         if (x + w < GUTTER) continue;
-        const active = now >= n.start && now < n.start + n.dur;
-        const past = now >= n.start + n.dur;
+        const active = holding ? chord.has(n) : now >= n.start && now < n.start + n.dur;
+        const past = !active && now >= n.start + n.dur;
         if (active) { if (t === leadIdx) lead = n; if (!top || n.midi > top.midi) top = n; }
         if (active) { c.shadowColor = col; c.shadowBlur = 16; }
         c.fillStyle = col;
@@ -586,15 +649,22 @@ input[type="checkbox"] { accent-color: var(--gilt); }
 
     // Playhead
     c.fillStyle = colors["gilt-hi"];
-    c.fillRect(Math.round(px) - 1, TOP - 4, 2, H - TOP - BOTTOM + 4);
+    c.fillRect(Math.round(px) - (holding ? 1.5 : 1), TOP - 4, holding ? 3 : 2, H - TOP - BOTTOM + 4);
     c.beginPath(); c.moveTo(px - 6, TOP - 10); c.lineTo(px + 6, TOP - 10); c.lineTo(px, TOP - 2); c.closePath(); c.fill();
+    if (!playing) {
+      // A grip at the foot of the line says it can be dragged.
+      c.beginPath(); c.roundRect(px - 7, H - BOTTOM - 26, 14, 22, 4); c.fill();
+      c.fillStyle = colors.surface;
+      for (const dx of [-2.5, 1.5]) c.fillRect(px + dx, H - BOTTOM - 21, 1, 12);
+    }
 
     // Gutter with pitch names; pitches sounding right now light up.
     c.fillStyle = colors.surface; c.fillRect(0, 0, GUTTER, H);
     c.fillStyle = colors.line; c.fillRect(GUTTER - 1, 0, 1, H);
     c.textAlign = "right";
     const sounding = new Set();
-    for (let i = firstAtOrAfter(notes, now - 8); i < notes.length && notes[i].start <= now; i++) if (now < notes[i].start + notes[i].dur) sounding.add(notes[i].midi);
+    if (holding) for (const n of chord) sounding.add(n.midi);
+    else for (let i = firstAtOrAfter(notes, now - 8); i < notes.length && notes[i].start <= now; i++) if (now < notes[i].start + notes[i].dur) sounding.add(notes[i].midi);
     c.font = `400 ${Math.max(8, Math.min(12, lh * 0.8))}px 'IBM Plex Mono', monospace`;
     for (let m = lo; m <= hi; m++) {
       if (lh < 12 && BLACK.has(m % 12)) continue;
@@ -647,27 +717,39 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   }
 
   // ---------- Input ----------
-  let dragging = false, downX = 0, downBeat = 0, moved = false;
+  let dragging = false, lineDrag = false, downX = 0, downBeat = 0, moved = false;
+  const nearLine = x => !playing && x > GUTTER && Math.abs(x - playX()) <= 10;
+
+  // Moving the line keeps the score still: the line's x and the beat under it change together.
+  function moveLine(x) {
+    const nx = Math.min(W - 10, Math.max(GUTTER + 10, x));
+    viewBeat = Math.min(endBeat + 0.5, Math.max(startBeat - 1, viewBeat + (nx - playX()) / pxPerBeat));
+    headFrac = (nx - GUTTER) / (W - GUTTER);
+  }
 
   cv.addEventListener("pointermove", e => {
     const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
     pointer = { x, y };
+    if (lineDrag) { moveLine(x); return; }
     if (dragging) {
       if (Math.abs(x - downX) > 4) moved = true;
       if (moved) { seek(downBeat - (x - downX) / pxPerBeat); hover = null; tip.hidden = true; }
       return;
     }
-    updateHover(x, y, true);
+    stage.classList.toggle("line", nearLine(x));
+    updateHover(x, y, !holdMode || playing);
   });
   cv.addEventListener("pointerleave", () => { pointer = null; hover = null; tip.hidden = true; });
   cv.addEventListener("pointerdown", e => {
     ensureAudio();
-    const r = cv.getBoundingClientRect();
-    dragging = true; moved = false; downX = e.clientX - r.left; downBeat = beatNow();
+    const r = cv.getBoundingClientRect(), x = e.clientX - r.left;
     cv.setPointerCapture(e.pointerId);
+    if (nearLine(x)) { lineDrag = true; hover = null; tip.hidden = true; return; }
+    dragging = true; moved = false; downX = x; downBeat = beatNow();
     stage.classList.add("dragging");
   });
   const endDrag = e => {
+    if (lineDrag) { lineDrag = false; return; }
     if (!dragging) return;
     dragging = false;
     stage.classList.remove("dragging");
@@ -687,8 +769,19 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   }, { passive: false });
 
   document.addEventListener("keydown", e => {
-    if (e.target.closest("input, select, textarea, button")) return;
+    if (e.target.closest("input, select, textarea")) return;
+    if (e.code === "Space" && e.target.closest("button")) e.target.blur();   // Space means play, not "press the focused button"
     if (e.code === "Space") { e.preventDefault(); ensureAudio(); playing ? pause() : play(); }
+    else if ((e.code === "ArrowRight" || e.code === "ArrowLeft") && holdMode && !playing && !e.shiftKey) {
+      // Step to the next or previous moment where any voice that's on starts a note. Played MIDI is humanized,
+      // so onsets within a 32nd of each other count as one chord and the step lands on the last of them.
+      e.preventDefault();
+      const now = beatNow(), WIN = 0.0625;
+      let i = e.code === "ArrowRight" ? firstAtOrAfter(notes, now + 0.02) : firstAtOrAfter(notes, now - WIN - 0.01) - 1;
+      if (i < 0 || i >= notes.length) return;
+      if (e.code === "ArrowRight") { const t0 = notes[i].start; while (i + 1 < notes.length && notes[i + 1].start <= t0 + WIN) i++; }
+      seek(notes[i].start);
+    }
     else if (e.code === "ArrowRight") { e.preventDefault(); seek(beatNow() + song.beatsPerBar); }
     else if (e.code === "ArrowLeft") { e.preventDefault(); seek(beatNow() - song.beatsPerBar); }
     else if (e.code === "Home") { e.preventDefault(); seek(startBeat - 0.25); }
@@ -697,6 +790,11 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   $("unlock").addEventListener("click", ensureAudio);
   $("play").addEventListener("click", () => playing ? pause() : play());
   $("restart").addEventListener("click", () => seek(startBeat - 0.25));
+  $("hold").addEventListener("click", e => {
+    holdMode = !holdMode;
+    e.currentTarget.setAttribute("aria-pressed", String(holdMode));
+    if (holdMode) { ensureAudio(); pause(); }
+  });
   $("tempo").addEventListener("input", e => setBpm(Number(e.target.value)));
   $("zoom").addEventListener("input", e => { pxPerBeat = Number(e.target.value); });
   $("vol").addEventListener("input", () => { if (master) master.gain.setTargetAtTime(vol(), ctx.currentTime, 0.02); });
