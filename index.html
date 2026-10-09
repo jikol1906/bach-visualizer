@@ -128,6 +128,17 @@ label.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 input[type="range"] { accent-color: var(--gilt); width: 120px; }
 input[type="checkbox"] { accent-color: var(--gilt); }
 .spacer { flex: 1 1 0; }
+select, input[type="number"] {
+  font: 500 .9rem var(--body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px;
+}
+input[type="number"] { width: 5.5em; font-family: var(--mono); }
+select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
+.mini {
+  display: block; width: 100%; height: 52px; margin-top: -6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  cursor: pointer; touch-action: none;
+}
 
 .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px 32px; color: var(--muted); font-size: .95rem; }
 .notes > div { min-width: 0; max-width: 62ch; }
@@ -164,6 +175,8 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     <button class="unlock" id="unlock" type="button">Click once to turn on sound</button>
   </div>
 
+  <canvas class="mini" id="mini" aria-label="Overview of the whole movement. Click or drag to jump."></canvas>
+
   <div class="rail">
     <div class="group">
       <button class="primary" id="play" type="button">Play</button>
@@ -175,6 +188,18 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     <label class="group ctl" for="zoom">Zoom <input id="zoom" type="range" min="50" max="340" value="150"></label>
     <label class="group ctl" for="vol">Volume <input id="vol" type="range" min="0" max="100" value="70"></label>
     <label class="group ctl" for="loop"><input id="loop" type="checkbox" checked> Loop</label>
+    <label class="group ctl" for="rev">Reverb <input id="rev" type="range" min="0" max="100" value="32"><output id="revOut">32%</output></label>
+    <label class="group ctl" for="room">Space
+      <select id="room">
+        <option value="0.9">Room</option>
+        <option value="2.4" selected>Hall</option>
+        <option value="5">Church</option>
+      </select>
+    </label>
+    <form class="group ctl" id="goForm">
+      <label for="goBar">Go to bar</label>
+      <input id="goBar" type="number" min="1" inputmode="numeric" placeholder="1">
+    </form>
     <span class="spacer"></span>
     <div class="group">
       <label class="file" for="midi">Load MIDI…<input id="midi" type="file" accept=".mid,.midi,audio/midi"></label>
@@ -342,6 +367,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
 
   function rebuild() {
     notes = song.tracks.filter(tr => tr.on).flatMap(tr => tr.notes).sort((x, y) => x.start - y.start || y.midi - x.midi);
+    miniDirty = true;
   }
 
   function renderChips() {
@@ -397,7 +423,27 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   }
 
   // ---------- Audio: a breathy flute and a bowed string voice ----------
-  let ctx = null, master = null, heldBus = null, duck = null, noiseBuf = null;
+  let ctx = null, master = null, heldBus = null, duck = null, noiseBuf = null, rev = null, wet = null;
+  const revAmount = () => Number($("rev").value) / 100;
+
+  // The space: a generated stereo impulse of decaying noise, darker as it fades. Bigger rooms
+  // ring longer and have a longer gap before the reflections arrive.
+  function makeIR(seconds) {
+    const sr = ctx.sampleRate, len = Math.round(sr * seconds), pre = sr * (0.006 + seconds * 0.006);
+    // A longer tail carries more energy; scale it so a bigger space sounds bigger, not just louder.
+    const level = (2.4 / seconds) ** 0.4;
+    const ir = ctx.createBuffer(2, len, sr);
+    for (let c = 0; c < 2; c++) {
+      const data = ir.getChannelData(c);
+      let lp = 0;
+      for (let i = 0; i < len; i++) {
+        const t = i / len, k = 0.55 - 0.45 * t;   // one-pole low-pass that closes over the tail
+        lp += k * ((Math.random() * 2 - 1) - lp);
+        data[i] = i < pre ? 0 : lp * (1 - t) ** 3.2 * level;
+      }
+    }
+    return ir;
+  }
   const voices = new Set();
   const vol = () => (Number($("vol").value) / 100) ** 1.5;
 
@@ -422,20 +468,9 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       const ch = noiseBuf.getChannelData(0);
       for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
 
-      // A small hall: a generated stereo impulse of decaying noise, darker as it fades.
-      const sr = ctx.sampleRate, len = Math.round(sr * 2.4);
-      const ir = ctx.createBuffer(2, len, sr);
-      for (let c = 0; c < 2; c++) {
-        const data = ir.getChannelData(c);
-        let lp = 0;
-        for (let i = 0; i < len; i++) {
-          const t = i / len, k = 0.55 - 0.45 * t;   // one-pole low-pass that closes over the tail
-          lp += k * ((Math.random() * 2 - 1) - lp);
-          data[i] = i < sr * 0.012 ? 0 : lp * (1 - t) ** 3.2;
-        }
-      }
-      const rev = ctx.createConvolver(), wet = ctx.createGain();
-      rev.buffer = ir; wet.gain.value = 0.32;
+      rev = ctx.createConvolver(); wet = ctx.createGain();
+      rev.buffer = makeIR(Number($("room").value));
+      wet.gain.value = revAmount();
       master.connect(rev).connect(wet).connect(comp);
     }
     if (ctx.state === "suspended") ctx.resume();
@@ -706,6 +741,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   function readColors() {
     const cs = getComputedStyle(document.documentElement);
     for (const k of ["surface", "ink", "muted", "line", "lane", "lane-alt", "gilt-hi", "v0", "v1", "v2", "v3", "v4", "v5"]) colors[k] = cs.getPropertyValue("--" + k).trim();
+    colors.ver = (colors.ver || 0) + 1;   // lets cached drawings know the theme changed
   }
   readColors();
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readColors);
@@ -723,6 +759,93 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   const laneH = () => (H - TOP - BOTTOM) / (hi - lo + 1);
   const yOf = m => TOP + (hi - m) * laneH();
   const xOf = (b, now) => playX() + (b - now) * pxPerBeat;
+
+  // ---------- Overview strip: the whole movement in miniature; click or drag to jump ----------
+  const mini = $("mini"), m2 = mini.getContext("2d");
+  const MPAD = 6, MTOP = 16;
+  let MW = 0, MH = 0, miniCache = null, miniDirty = true;
+  function miniResize() {
+    const r = mini.getBoundingClientRect();
+    MW = r.width; MH = r.height;
+    mini.width = Math.round(MW * dpr); mini.height = Math.round(MH * dpr);
+    miniDirty = true;
+  }
+  new ResizeObserver(miniResize).observe(mini);
+  const miniSpan = () => [Math.min(startBeat, song.bars[0].start), endBeat];
+  const mx = b => { const [a, z] = miniSpan(); return MPAD + (b - a) / (z - a) * (MW - 2 * MPAD); };
+  const mBeat = x => { const [a, z] = miniSpan(); return a + (x - MPAD) / (MW - 2 * MPAD) * (z - a); };
+
+  // Where the music changes character: a big tempo change (not the closing ritardando) or a new metre.
+  function sectionMarks() {
+    const marks = [], m = song.tempoMap;
+    for (let i = 1; i < m.length; i++) {
+      const r = m[i].bpm / m[i - 1].bpm;
+      if ((r > 1.25 || r < 0.8) && m[i].beat < endBeat - 8 && !marks.some(x => Math.abs(x - m[i].beat) < 4)) marks.push(m[i].beat);
+    }
+    const bars = song.bars;
+    for (let i = 2; i < bars.length - 1; i++) {
+      const a = bars[i - 1], b = bars[i];
+      if ((a.len !== b.len || a.unit !== b.unit) && bars[i + 1].len === b.len && b.start < endBeat - 8 && !marks.some(x => Math.abs(x - b.start) < 4)) marks.push(b.start);
+    }
+    return marks;
+  }
+
+  function renderMini() {
+    miniCache = miniCache || document.createElement("canvas");
+    miniCache.width = mini.width; miniCache.height = mini.height;
+    const c = miniCache.getContext("2d");
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.fillStyle = colors.surface; c.fillRect(0, 0, MW, MH);
+    // Bar numbers, as sparse as the width needs.
+    const [a, z] = miniSpan(), pxPerBar = (MW - 2 * MPAD) / ((z - a) / (song.bars[1] ? song.bars[1].len : 4));
+    const every = [1, 2, 4, 8, 16, 32, 64].find(k => k * pxPerBar >= 34) || 128;
+    c.font = "500 9px 'IBM Plex Mono', monospace"; c.textBaseline = "middle"; c.textAlign = "left";
+    for (const bar of song.bars) {
+      if (bar.n < 1 || (bar.n - 1) % every) continue;
+      const x = mx(bar.start);
+      c.fillStyle = colors.line; c.fillRect(Math.round(x), MTOP - 2, 1, MH - MTOP);
+      c.fillStyle = colors.muted; c.fillText(String(bar.n), x + 2, 8);
+    }
+    // Every note of every voice that's on, lowest voices first.
+    const h = MH - MTOP - 4, ph = Math.max(1.2, h / (hi - lo + 1));
+    for (let t = song.tracks.length - 1; t >= 0; t--) {
+      const tr = song.tracks[t];
+      if (!tr.on) continue;
+      c.fillStyle = colors["v" + tr.color];
+      for (const n of tr.notes) {
+        const x = mx(n.start), w = Math.max(1, mx(n.start + n.dur) - x);
+        c.fillRect(x, MTOP + (hi - n.midi) / (hi - lo + 1) * h, w, ph);
+      }
+    }
+    // Section marks
+    c.fillStyle = colors["gilt-hi"];
+    for (const b of sectionMarks()) {
+      const x = mx(b);
+      c.fillRect(Math.round(x), 0, 2, MH);
+      c.beginPath(); c.moveTo(x + 2, 1); c.lineTo(x + 9, 4.5); c.lineTo(x + 2, 8); c.closePath(); c.fill();
+    }
+    miniDirty = false;
+  }
+
+  function drawMini(now, b0, b1) {
+    if (!MW) return;
+    if (miniDirty || miniCache.ver !== colors.ver) { renderMini(); miniCache.ver = colors.ver; }
+    m2.setTransform(1, 0, 0, 1, 0, 0);
+    m2.drawImage(miniCache, 0, 0);
+    m2.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // The part of the movement the lane shows, and the line.
+    const x0 = Math.max(MPAD, mx(b0)), x1 = Math.min(MW - MPAD, mx(b1));
+    m2.fillStyle = colors.ink; m2.globalAlpha = 0.08; m2.fillRect(x0, 1, Math.max(2, x1 - x0), MH - 2); m2.globalAlpha = 1;
+    m2.strokeStyle = colors.ink; m2.lineWidth = 1; m2.strokeRect(x0 + 0.5, 1.5, Math.max(2, x1 - x0) - 1, MH - 3);
+    m2.fillStyle = colors["gilt-hi"]; m2.fillRect(Math.round(mx(now)) - 1, 0, 2, MH);
+  }
+
+  let miniDown = false;
+  const miniSeek = e => { const r = mini.getBoundingClientRect(); seek(mBeat(e.clientX - r.left)); };
+  mini.addEventListener("pointerdown", e => { ensureAudio(); miniDown = true; mini.setPointerCapture(e.pointerId); miniSeek(e); });
+  mini.addEventListener("pointermove", e => { if (miniDown) miniSeek(e); });
+  mini.addEventListener("pointerup", () => { miniDown = false; });
+  mini.addEventListener("pointercancel", () => { miniDown = false; });
 
   // Index of the bar containing beat b, with a 32nd of slack since played MIDI lands a hair early.
   function barIdx(b) {
@@ -849,6 +972,8 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       c.fillStyle = sounding.has(m) ? colors["gilt-hi"] : colors.muted;
       c.fillText(noteName(m), GUTTER - 8, yOf(m) + lh / 2);
     }
+
+    drawMini(now, b0, b1);
 
     // Readouts
     const bi = barInfo(now);
@@ -985,6 +1110,20 @@ input[type="checkbox"] { accent-color: var(--gilt); }
     if (holdMode) { ensureAudio(); pause(); }
   });
   $("arp").addEventListener("click", () => setArp(!arpOn));
+  $("rev").addEventListener("input", e => {
+    $("revOut").textContent = e.target.value + "%";
+    if (wet) wet.gain.setTargetAtTime(revAmount(), ctx.currentTime, 0.03);
+  });
+  $("room").addEventListener("change", e => {
+    if (rev) rev.buffer = makeIR(Number(e.target.value));
+  });
+  $("goForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const n = Math.round(Number($("goBar").value));
+    const bar = song.bars.find(b => b.n === n);
+    if (bar) { seek(bar.start); $("goBar").blur(); }
+    else $("goBar").value = "";
+  });
   $("tempo").addEventListener("input", e => setSpeed(Number(e.target.value)));
   $("zoom").addEventListener("input", e => { pxPerBeat = Number(e.target.value); });
   $("vol").addEventListener("input", () => { if (master) master.gain.setTargetAtTime(vol(), ctx.currentTime, 0.02); });

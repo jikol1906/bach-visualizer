@@ -21,4 +21,5 @@ MIDI files rarely mark an upbeat. If the first note isn't on a barline, the app 
 - Hover a note to hear it, or click/tap it
 - **Hold chord** (while paused): every note under the line sustains until the line leaves it, so you can hear the harmony. Drag the line itself, or drag the score under it. `←` `→` step from chord to chord, `Shift` + `←` `→` jump a bar. **Arpeggio** (or `A`) toggles a running arpeggio of the held chord, up and down, that follows the line
 - `Space`: play/pause · `←` `→`: jump a bar · `Home`: back to the start
-- Tempo, zoom, volume and loop are in the control rail
+- The **overview strip** under the lane shows the whole movement; click or drag on it to jump. Gold flags mark big tempo or metre changes (like the Ouverture's fast fugue). **Go to bar** jumps to a bar number
+- Speed, zoom, volume, loop, **reverb** amount and **space** (Room, Hall, Church) are in the control rail
