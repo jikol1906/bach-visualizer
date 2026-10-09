@@ -531,7 +531,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const wind = kind === "wind", held = dur === Infinity;
     const d = Math.max(dur * 0.92, 0.06), atk = wind ? 0.025 : held ? 0.12 : 0.05, rel = wind ? 0.08 : 0.16;
     const peak = (wind ? 0.2 : 0.07) * vel;
-    const g = ctx.createGain();
+    // Every node made for this note is listed, so all of them can be disconnected once it has ended.
+    // A stopped node that is still connected to a live bus is never freed: without this, each note left
+    // ~20 dead nodes behind, and after a few minutes the audio thread glitched and the page lagged.
+    const all = [], mk = node => (all.push(node), node);
+    const g = mk(ctx.createGain());
     g.gain.setValueAtTime(0, when);
     g.gain.linearRampToValueAtTime(peak, when + atk);
     if (held) g.gain.linearRampToValueAtTime(peak * 0.8, when + atk + 0.15);
@@ -541,12 +545,12 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
     // Held voices fade out through their own gain, which only ever ramps from 1 to 0. That avoids cancelling
     // the envelope mid-ramp, which some browsers (Safari) answer with a jump in level, heard as a click.
-    const rg = held ? ctx.createGain() : null;
+    const rg = held ? mk(ctx.createGain()) : null;
     const out = tr ? busFor(tr, held) : held ? heldBus : master;
     if (held) g.connect(rg).connect(out); else g.connect(out);
 
     // Vibrato that only blooms on longer notes.
-    const lfo = ctx.createOscillator(), lfoG = ctx.createGain();
+    const lfo = mk(ctx.createOscillator()), lfoG = mk(ctx.createGain());
     lfo.frequency.value = wind ? 5.3 : 5.6;
     lfoG.gain.setValueAtTime(0, when);
     lfoG.gain.linearRampToValueAtTime(wind ? 14 : 9, when + 0.35);
@@ -555,14 +559,14 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
     if (wind) {
       for (const [mult, amp] of [[1, 1], [2, 0.22], [3, 0.07]]) {
-        const o = ctx.createOscillator(), og = ctx.createGain();
+        const o = mk(ctx.createOscillator()), og = mk(ctx.createGain());
         o.type = "sine"; o.frequency.value = f * mult; og.gain.value = amp;
         lfoG.connect(o.detune);
         o.connect(og).connect(g);
         nodes.push(o);
       }
       // A puff of breath at the start of each note.
-      const n = ctx.createBufferSource(), bp = ctx.createBiquadFilter(), ng = ctx.createGain();
+      const n = mk(ctx.createBufferSource()), bp = mk(ctx.createBiquadFilter()), ng = mk(ctx.createGain());
       n.buffer = noiseBuf; bp.type = "bandpass"; bp.frequency.value = Math.min(f * 2, 9000); bp.Q.value = 1.2;
       ng.gain.setValueAtTime(0, when);
       ng.gain.linearRampToValueAtTime(0.05 * vel, when + 0.012);
@@ -573,7 +577,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       // A bowed section: four detuned saws that each drift a little on their own, a filter that opens on
       // the bow's bite and then settles, two body resonances, and a thread of bow noise.
       const low = midi < 57;   // viola and cello bodies resonate lower than a violin's
-      const hp = ctx.createBiquadFilter(), lp = ctx.createBiquadFilter(), b1 = ctx.createBiquadFilter(), b2 = ctx.createBiquadFilter();
+      const hp = mk(ctx.createBiquadFilter()), lp = mk(ctx.createBiquadFilter()), b1 = mk(ctx.createBiquadFilter()), b2 = mk(ctx.createBiquadFilter());
       hp.type = "highpass"; hp.frequency.value = f * 0.7; hp.Q.value = 0.5;
       lp.type = "lowpass"; lp.Q.value = 0.6;
       lp.frequency.setValueAtTime(Math.min(f * 9, 11000), when);
@@ -582,16 +586,16 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       b2.type = "peaking"; b2.frequency.value = low ? 1500 : 2900; b2.Q.value = 1.8; b2.gain.value = 6;
       hp.connect(lp).connect(b1).connect(b2).connect(g);
       [-11, -4, 3, 10].forEach((det, k) => {
-        const o = ctx.createOscillator(), og = ctx.createGain();
+        const o = mk(ctx.createOscillator()), og = mk(ctx.createGain());
         o.type = "sawtooth"; o.frequency.value = f; o.detune.value = det; og.gain.value = 0.26;
         lfoG.connect(o.detune);
-        const drift = ctx.createOscillator(), dg = ctx.createGain();
+        const drift = mk(ctx.createOscillator()), dg = mk(ctx.createGain());
         drift.frequency.value = 0.17 + 0.13 * k; dg.gain.value = 3.5;
         drift.connect(dg).connect(o.detune);
         o.connect(og).connect(hp);
         nodes.push(o, drift);
       });
-      const n = ctx.createBufferSource(), bp = ctx.createBiquadFilter(), ng = ctx.createGain();
+      const n = mk(ctx.createBufferSource()), bp = mk(ctx.createBiquadFilter()), ng = mk(ctx.createGain());
       n.buffer = noiseBuf; n.loop = true;
       bp.type = "bandpass"; bp.frequency.value = Math.min(f * 3, 9000); bp.Q.value = 0.9;
       ng.gain.setValueAtTime(0, when);
@@ -602,6 +606,14 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
 
     const v = { nodes, g };
+    const cleanup = () => {
+      if (v.done) return;
+      v.done = true;
+      for (const node of all) try { node.disconnect(); } catch (e) { /* already disconnected */ }
+      voices.delete(v); fading.delete(v);
+    };
+    // onended is the main trigger; a timer backs it up for browsers that don't fire it reliably.
+    const cleanupAt = t => { nodes[1].onended = cleanup; setTimeout(cleanup, Math.max(0, t - ctx.currentTime) * 1000 + 300); };
     if (held) {
       // The breath noise is a one-second buffer, so let it play out once; the tones run until release.
       for (const node of nodes) node.start(when);
@@ -611,12 +623,13 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
         rg.gain.linearRampToValueAtTime(0, at + fade);
         for (const node of nodes) try { node.stop(at + fade + 0.02); } catch (e) { /* already stopped */ }
         v.until = at + fade;
+        cleanupAt(at + fade + 0.02);
       };
       return v;
     }
     const stopAt = when + d + rel + 0.05;
     for (const node of nodes) { node.start(when); node.stop(stopAt); }
-    nodes[1].onended = () => voices.delete(v);
+    cleanupAt(stopAt);
     voices.add(v);
     return v;
   }
