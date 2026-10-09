@@ -183,6 +183,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       <button id="restart" type="button">Restart</button>
       <button id="hold" type="button" aria-pressed="false" title="While paused, sustain every note under the line">Hold chord</button>
       <button id="arp" type="button" disabled aria-pressed="false" title="Keep arpeggiating the held chord, up and down (A)">Arpeggio</button>
+      <label class="group ctl" for="arpRate" title="Arpeggio speed, in notes per second">Arp <input id="arpRate" type="range" min="2" max="16" step="0.5" value="6"><output id="arpOut">6/s</output></label>
     </div>
     <label class="group ctl" for="tempo">Speed <input id="tempo" type="range" min="25" max="200" step="5" value="100"><output id="tempoOut">100%</output></label>
     <label class="group ctl" for="zoom">Zoom <input id="zoom" type="range" min="50" max="340" value="150"></label>
@@ -210,7 +211,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <div>
       <h2>Playing it</h2>
       <p>Hover over any note to hear it. Click a voice above to hide and mute it. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar, <kbd>Home</kbd> goes back to the start.</p>
-      <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off.</p>
+      <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
     <div>
@@ -599,8 +600,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   // Arpeggio toggle: while on, cycle through the held chord up and back down (turning without repeating
   // the top or bottom note), one pitch per step, each in its own voice's sound. It follows the chord as
   // the line moves, and the sustained chord ducks underneath.
-  const ARP_STEP = 0.17;
-  let arpOn = false, arpK = 0, arpMidi = null, arpTimer = null, ducked = false;
+  // Timed on the audio clock: a short look-ahead (60 ms) keeps notes even at high speeds while still
+  // picking up a new chord almost at once when the line moves.
+  const arpStep = () => 1 / Number($("arpRate").value);   // seconds per note
+  let arpOn = false, arpK = 0, arpMidi = null, arpTimer = null, ducked = false, arpNext = 0;
+  const arpShown = [];   // { t, midi } scheduled notes, for the outline in draw()
   function arpList() {
     const byPitch = new Map();
     for (const n of [...chord].sort((a, b) => a.midi - b.midi || (a.tr.kind === "wind") - (b.tr.kind === "wind"))) if (!byPitch.has(n.midi)) byPitch.set(n.midi, n);
@@ -609,21 +613,29 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   function arpTick() {
     const live = arpOn && holdMode && !playing && chord.size && ctx && ctx.state === "running";
     if (live !== ducked && ctx) { duck.gain.setTargetAtTime(live ? 0.3 : 1, ctx.currentTime, 0.06); ducked = live; }
-    if (!live) { arpMidi = null; return; }
-    const list = arpList();
-    const seq = list.length < 2 ? list : list.concat(list.slice(1, -1).reverse());   // up, then down
-    const n = seq[arpK++ % seq.length];
-    voice(n.midi, ctx.currentTime + 0.01, 0.45, 0.85, n.tr.kind);
-    arpMidi = n.midi;
+    if (!live) { arpMidi = null; arpShown.length = 0; arpNext = 0; return; }
+    const now = ctx.currentTime, step = arpStep();
+    if (arpNext < now) arpNext = now + 0.01;
+    while (arpNext < now + 0.06) {
+      const list = arpList();
+      const seq = list.length < 2 ? list : list.concat(list.slice(1, -1).reverse());   // up, then down
+      const n = seq[arpK++ % seq.length];
+      voice(n.midi, arpNext, Math.min(0.45, step * 2.5), 0.85, n.tr.kind);   // shorter notes when fast, to spare the CPU
+      arpShown.push({ t: arpNext, midi: n.midi });
+      arpNext += step;
+    }
+    while (arpShown.length > 1 && arpShown[1].t <= now) arpShown.shift();
+    arpMidi = arpShown.length && arpShown[0].t <= now ? arpShown[0].midi : arpMidi;
   }
   function setArp(on) {
     arpOn = on;
     $("arp").setAttribute("aria-pressed", String(on));
     clearInterval(arpTimer);
-    arpK = 0;
-    if (on) { ensureAudio(); arpTimer = setInterval(arpTick, ARP_STEP * 1000); arpTick(); }
+    arpK = 0; arpNext = 0; arpShown.length = 0;
+    if (on) { ensureAudio(); arpTimer = setInterval(arpTick, 20); arpTick(); }
     else arpTick();
   }
+
 
   function releaseHeld() {
     for (const v of heldVoices.values()) v.release();
@@ -1110,6 +1122,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (holdMode) { ensureAudio(); pause(); }
   });
   $("arp").addEventListener("click", () => setArp(!arpOn));
+  $("arpRate").addEventListener("input", e => { $("arpOut").textContent = e.target.value + "/s"; });
   $("rev").addEventListener("input", e => {
     $("revOut").textContent = e.target.value + "%";
     if (wet) wet.gain.setTargetAtTime(revAmount(), ctx.currentTime, 0.03);
