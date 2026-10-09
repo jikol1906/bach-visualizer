@@ -395,7 +395,7 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   }
 
   // ---------- Audio: a breathy flute and a bowed string voice ----------
-  let ctx = null, master = null, noiseBuf = null;
+  let ctx = null, master = null, heldBus = null, noiseBuf = null;
   const voices = new Set();
   const vol = () => (Number($("vol").value) / 100) ** 1.5;
 
@@ -406,9 +406,15 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       ctx = new AC();
       master = ctx.createGain();
       master.gain.value = vol();
+      // A gentle compressor, then a fast brick-wall limiter so big chords never clip.
       const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -16; comp.ratio.value = 4;
-      master.connect(comp).connect(ctx.destination);
+      comp.threshold.value = -16; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.2;
+      const lim = ctx.createDynamicsCompressor();
+      lim.threshold.value = -4; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.1;
+      master.connect(comp).connect(lim).connect(ctx.destination);
+      // Held chords get their own bus, turned down as the chord grows (doubled notes add up fast).
+      heldBus = ctx.createGain();
+      heldBus.connect(master);
       noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
       const ch = noiseBuf.getChannelData(0);
       for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
@@ -449,7 +455,10 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       g.gain.linearRampToValueAtTime(peak * 0.8, when + Math.max(atk + 0.01, d));
       g.gain.linearRampToValueAtTime(0, when + d + rel);
     }
-    g.connect(master);
+    // Held voices fade out through their own gain, which only ever ramps from 1 to 0. That avoids cancelling
+    // the envelope mid-ramp, which some browsers (Safari) answer with a jump in level, heard as a click.
+    const rg = held ? ctx.createGain() : null;
+    if (held) g.connect(rg).connect(heldBus); else g.connect(master);
 
     // Vibrato that only blooms on longer notes.
     const lfo = ctx.createOscillator(), lfoG = ctx.createGain();
@@ -512,12 +521,11 @@ input[type="checkbox"] { accent-color: var(--gilt); }
       // The breath noise is a one-second buffer, so let it play out once; the tones run until release.
       for (const node of nodes) node.start(when);
       if (wind) nodes[nodes.length - 1].stop(when + 0.2);
-      v.release = () => {
-        const now = ctx.currentTime;
-        g.gain.cancelScheduledValues(now);
-        g.gain.setValueAtTime(g.gain.value, now);
-        g.gain.linearRampToValueAtTime(0, now + (wind ? 0.18 : 0.35));
-        for (const node of nodes) try { node.stop(now + 0.45); } catch (e) { /* already stopped */ }
+      v.release = (at = ctx.currentTime, fade = wind ? 0.15 : 0.22) => {
+        rg.gain.setValueAtTime(1, at);
+        rg.gain.linearRampToValueAtTime(0, at + fade);
+        for (const node of nodes) try { node.stop(at + fade + 0.02); } catch (e) { /* already stopped */ }
+        v.until = at + fade;
       };
       return v;
     }
@@ -531,7 +539,8 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   // ---------- Hold chord: while paused, sustain everything under the line ----------
   let holdMode = false;
   const heldVoices = new Map();   // note -> held voice
-  let chord = new Set();
+  let chord = new Set(), lastChordSize = 0;
+  const fading = new Set();   // released held voices that are still fading out
 
   // Notes under beat b in the voices that are on. A note counts until the next note in its voice starts
   // (up to one beat), so detached accompaniment and short rests don't punch holes in the harmony.
@@ -557,8 +566,23 @@ input[type="checkbox"] { accent-color: var(--gilt); }
   function updateChord() {
     chord = holdMode && !playing ? chordAt(viewBeat) : new Set();
     const audible = ctx && ctx.state === "running";
-    for (const [n, v] of heldVoices) if (!chord.has(n) || !audible) { v.release(); heldVoices.delete(n); }
-    if (audible) for (const n of chord) if (!heldVoices.has(n)) heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), n.tr.kind));
+    for (const [n, v] of heldVoices) if (!chord.has(n) || !audible) {
+      // Fast drags pile up fading voices; past a dozen, fade the newcomers quickly to spare a phone's CPU.
+      const now = ctx ? ctx.currentTime : 0;
+      for (const f of fading) if (f.until <= now) fading.delete(f);
+      v.release(undefined, fading.size > 12 ? 0.04 : undefined);
+      fading.add(v);
+      heldVoices.delete(n);
+    }
+    if (audible) {
+      let added = false;
+      for (const n of chord) if (!heldVoices.has(n)) { heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), n.tr.kind)); added = true; }
+      if (added || chord.size !== lastChordSize) {
+        // Roughly equal loudness whatever the chord size: full level up to 3 notes, then 1/sqrt(n).
+        heldBus.gain.setTargetAtTime(Math.min(1, Math.sqrt(3 / Math.max(chord.size, 1))), ctx.currentTime, 0.03);
+        lastChordSize = chord.size;
+      }
+    }
     const label = chord.size ? [...chord].sort((a, b) => a.midi - b.midi).map(n => noteName(n.midi)).join(" ") : "–";
     if ($("rdChord").textContent !== label) $("rdChord").textContent = label;
     $("rdChordBox").hidden = !holdMode;
