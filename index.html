@@ -238,6 +238,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   </section>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/tonal@6.4.3/browser/tonal.min.js"></script>
 <script>
 (() => {
   "use strict";
@@ -657,30 +658,21 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     return out;
   }
 
-  // Name a chord from its pitch classes, e.g. "Bm", "F♯7", "D/F♯". It only names clean triads and
-  // seventh chords (also sevenths without their fifth, which Bach writes all the time). Anything with an
-  // extra pitch class (a passing tone, a suspension) gets no name rather than a made-up one.
-  const CHORD_SHAPES = [   // [suffix, intervals above the root], most common first
-    ["", [0, 4, 7]], ["m", [0, 3, 7]], ["7", [0, 4, 7, 10]], ["7", [0, 4, 10]], ["dim", [0, 3, 6]],
-    ["m7", [0, 3, 7, 10]], ["m7", [0, 3, 10]], ["dim7", [0, 3, 6, 9]], ["m7♭5", [0, 3, 6, 10]],
-    ["maj7", [0, 4, 7, 11]], ["maj7", [0, 4, 11]], ["aug", [0, 4, 8]], ["sus4", [0, 5, 7]],
-  ];
+  // Name a chord with Tonal, e.g. "Bm", "F♯7", "Bm/D". Tonal reads the first note as the bass, so the
+  // pitch classes go in lowest first. assumePerfectFifth lets it name sevenths without their fifth
+  // ("C♯ E B" → C♯m7), which Bach writes all the time. Tonal often offers several readings and likes
+  // exotic ones with the bass as root ("F♯ A D" → F♯m♯5 before D/F♯), so take the first common chord it
+  // offers and only fall back to its own first pick. If the library didn't load (offline), the readout
+  // just shows the notes.
+  const SHARPS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  const COMMON = new Set(["M", "m", "dim", "aug", "sus4", "6", "m6", "7", "maj7", "m7", "m7b5", "dim7"]);
   function chordName(midis) {
-    if (!midis.length) return "";
-    const bass = Math.min(...midis) % 12;
-    const pcs = [...new Set(midis.map(m => m % 12))];
+    if (!window.Tonal || !midis.length) return "";
+    const pcs = [...new Set(midis.map(m => SHARPS[m % 12]))];
     if (pcs.length < 3) return "";   // a lone interval could be several chords
-    let best = null;
-    CHORD_SHAPES.forEach(([suffix, shape], rank) => {
-      if (shape.length !== pcs.length) return;
-      for (const root of pcs) {
-        if (!pcs.every(p => shape.includes((p - root + 12) % 12))) continue;
-        const score = rank - (root === bass ? 100 : 0);   // a root in the bass wins (and settles dim7/aug)
-        if (!best || score < best.score) best = { score, root, suffix };
-      }
-    });
-    if (!best) return "";
-    return NAMES[best.root] + best.suffix + (best.root === bass ? "" : "/" + NAMES[bass]);
+    const found = Tonal.Chord.detect(pcs, { assumePerfectFifth: true });
+    const best = found.find(x => COMMON.has(x.split("/")[0].slice((Tonal.Chord.get(x).tonic || "").length))) || found[0] || "";
+    return best.replace(/M(?=\/|$)/, "").replace(/#/g, "♯").replace(/b(?=\d)/g, "♭");   // "F#M" → "F♯"
   }
 
   // Arpeggio toggle: while on, cycle through the held chord up and back down (turning without repeating
