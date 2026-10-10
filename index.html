@@ -133,6 +133,7 @@ h1 em { color: var(--gilt); }
   border: 1px solid var(--gilt); border-radius: 4px; padding: 3px 8px;
 }
 .chordtag span { color: var(--muted); margin-right: 6px; }
+.chordtag .name { color: var(--gilt); margin-right: 8px; }
 label.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .ctl { font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .ctl output { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--ink); font-variant-numeric: tabular-nums; display: inline-block; min-width: 4.5ch; }
@@ -182,7 +183,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <div class="stage" id="stage">
     <canvas id="cv" aria-label="Scrolling piano roll of every voice. Hover a note to hear it."></canvas>
     <div class="tip" id="tip" hidden></div>
-    <div class="chordtag" id="rdChordBox" hidden><span>Chord</span><b id="rdChord">–</b></div>
+    <div class="chordtag" id="rdChordBox" hidden><span>Chord</span><b class="name" id="rdChordName" hidden></b><b id="rdChord">–</b></div>
     <button class="unlock" id="unlock" type="button">Click once to turn on sound</button>
   </div>
 
@@ -656,6 +657,32 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     return out;
   }
 
+  // Name a chord from its pitch classes, e.g. "Bm", "F♯7", "D/F♯". It only names clean triads and
+  // seventh chords (also sevenths without their fifth, which Bach writes all the time). Anything with an
+  // extra pitch class (a passing tone, a suspension) gets no name rather than a made-up one.
+  const CHORD_SHAPES = [   // [suffix, intervals above the root], most common first
+    ["", [0, 4, 7]], ["m", [0, 3, 7]], ["7", [0, 4, 7, 10]], ["7", [0, 4, 10]], ["dim", [0, 3, 6]],
+    ["m7", [0, 3, 7, 10]], ["m7", [0, 3, 10]], ["dim7", [0, 3, 6, 9]], ["m7♭5", [0, 3, 6, 10]],
+    ["maj7", [0, 4, 7, 11]], ["maj7", [0, 4, 11]], ["aug", [0, 4, 8]], ["sus4", [0, 5, 7]],
+  ];
+  function chordName(midis) {
+    if (!midis.length) return "";
+    const bass = Math.min(...midis) % 12;
+    const pcs = [...new Set(midis.map(m => m % 12))];
+    if (pcs.length < 3) return "";   // a lone interval could be several chords
+    let best = null;
+    CHORD_SHAPES.forEach(([suffix, shape], rank) => {
+      if (shape.length !== pcs.length) return;
+      for (const root of pcs) {
+        if (!pcs.every(p => shape.includes((p - root + 12) % 12))) continue;
+        const score = rank - (root === bass ? 100 : 0);   // a root in the bass wins (and settles dim7/aug)
+        if (!best || score < best.score) best = { score, root, suffix };
+      }
+    });
+    if (!best) return "";
+    return NAMES[best.root] + best.suffix + (best.root === bass ? "" : "/" + NAMES[bass]);
+  }
+
   // Arpeggio toggle: while on, cycle through the held chord up and back down (turning without repeating
   // the top or bottom note), one pitch per step, each in its own voice's sound. It follows the chord as
   // the line moves, and the sustained chord goes silent meanwhile.
@@ -721,8 +748,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
         lastChordSize = chord.size;
       }
     }
-    const label = chord.size ? [...chord].sort((a, b) => a.midi - b.midi).map(n => noteName(n.midi)).join(" ") : "–";
+    const midis = [...chord].map(n => n.midi).sort((a, b) => a - b);
+    const label = midis.length ? midis.map(noteName).join(" ") : "–", name = chordName(midis);
     if ($("rdChord").textContent !== label) $("rdChord").textContent = label;
+    if ($("rdChordName").textContent !== name) { $("rdChordName").textContent = name; $("rdChordName").hidden = !name; }
     $("rdChordBox").hidden = !holdMode;
   }
 
