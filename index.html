@@ -115,6 +115,11 @@ h1 em { color: var(--gilt); }
 .group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 /* Grid children may shrink below their content, so one wide row can never widen the whole page. */
 .wrap > * { min-width: 0; }
+/* Dragging the lane with a finger shouldn't start a text selection or a long-press menu. Only the
+   programme notes stay selectable. */
+.wrap > :not(.notes) { -webkit-user-select: none; user-select: none; }
+.wrap input { -webkit-user-select: text; user-select: text; }
+.stage, .mini { -webkit-touch-callout: none; }
 .rail button, label.file {
   font: 500 .95rem var(--body); color: var(--ink); background: var(--surface);
   border: 1px solid var(--line); border-radius: 4px; padding: 7px 14px; cursor: pointer;
