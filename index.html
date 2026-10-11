@@ -727,10 +727,14 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function updateChord() {
     chord = holdMode && !playing ? chordAt(viewBeat) : new Set();
-    const audible = ctx && ctx.state === "running";
-    for (const [n, v] of heldVoices) if (!chord.has(n) || !audible) {
+    const audible = ctx && ctx.state === "running", now = ctx ? ctx.currentTime : 0;
+    for (const [n, v] of heldVoices) {
+      // A note that drops out keeps sounding for a moment before it fades. A finger resting near a note's
+      // start wobbles it in and out of the chord, and restarting it each time meant a fresh attack over the
+      // old one's fade, again and again: audible, and enough work to make a phone's audio crackle.
+      if (chord.has(n) && audible) { v.gone = 0; continue; }
+      if (audible && holdMode && !playing && (v.gone ||= now) > now - 0.1) continue;
       // Fast drags pile up fading voices; past a dozen, fade the newcomers quickly to spare a phone's CPU.
-      const now = ctx ? ctx.currentTime : 0;
       for (const f of fading) if (f.until <= now) fading.delete(f);
       v.release(undefined, fading.size > 12 ? 0.04 : undefined);
       fading.add(v);
@@ -739,10 +743,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (audible) {
       let added = false;
       for (const n of chord) if (!heldVoices.has(n)) { heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), n.tr.kind, n.tr)); added = true; }
-      if (added || chord.size !== lastChordSize) {
+      if (added || heldVoices.size !== lastChordSize) {
         // Roughly equal loudness whatever the chord size: full level up to 3 notes, then 1/sqrt(n).
-        heldBus.gain.setTargetAtTime(Math.min(1, Math.sqrt(3 / Math.max(chord.size, 1))), ctx.currentTime, 0.03);
-        lastChordSize = chord.size;
+        heldBus.gain.setTargetAtTime(Math.min(1, Math.sqrt(3 / Math.max(heldVoices.size, 1))), ctx.currentTime, 0.03);
+        lastChordSize = heldVoices.size;
       }
     }
     const midis = [...chord].map(n => n.midi).sort((a, b) => a - b);
