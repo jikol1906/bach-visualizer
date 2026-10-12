@@ -115,6 +115,11 @@ h1 em { color: var(--gilt); }
 .group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 /* Grid children may shrink below their content, so one wide row can never widen the whole page. */
 .wrap > * { min-width: 0; }
+/* Dragging the lane with a finger shouldn't start a text selection or a long-press menu. Only the
+   programme notes stay selectable. */
+.wrap > :not(.notes) { -webkit-user-select: none; user-select: none; }
+.wrap input { -webkit-user-select: text; user-select: text; }
+.stage, .mini { -webkit-touch-callout: none; }
 .rail button, label.file {
   font: 500 .95rem var(--body); color: var(--ink); background: var(--surface);
   border: 1px solid var(--line); border-radius: 4px; padding: 7px 14px; cursor: pointer;
@@ -133,6 +138,7 @@ h1 em { color: var(--gilt); }
   border: 1px solid var(--gilt); border-radius: 4px; padding: 3px 8px;
 }
 .chordtag span { color: var(--muted); margin-right: 6px; }
+.chordtag .name { color: var(--gilt); margin-right: 8px; }
 label.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .ctl { font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .ctl output { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--ink); font-variant-numeric: tabular-nums; display: inline-block; min-width: 4.5ch; }
@@ -182,7 +188,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <div class="stage" id="stage">
     <canvas id="cv" aria-label="Scrolling piano roll of every voice. Hover a note to hear it."></canvas>
     <div class="tip" id="tip" hidden></div>
-    <div class="chordtag" id="rdChordBox" hidden><span>Chord</span><b id="rdChord">–</b></div>
+    <div class="chordtag" id="rdChordBox" hidden><span>Chord</span><b class="name" id="rdChordName" hidden></b><b id="rdChord">–</b></div>
     <button class="unlock" id="unlock" type="button">Click once to turn on sound</button>
   </div>
 
@@ -237,6 +243,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   </section>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/tonal@6.4.3/browser/tonal.min.js"></script>
 <script>
 (() => {
   "use strict";
@@ -662,6 +669,23 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     return out;
   }
 
+  // Name a chord with Tonal, e.g. "Bm", "F♯7", "Bm/D". Tonal reads the first note as the bass, so the
+  // pitch classes go in lowest first. assumePerfectFifth lets it name sevenths without their fifth
+  // ("C♯ E B" → C♯m7), which Bach writes all the time. Tonal often offers several readings and likes
+  // exotic ones with the bass as root ("F♯ A D" → F♯m♯5 before D/F♯), so take the first common chord it
+  // offers and only fall back to its own first pick. If the library didn't load (offline), the readout
+  // just shows the notes.
+  const SHARPS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  const COMMON = new Set(["M", "m", "dim", "aug", "sus4", "6", "m6", "7", "maj7", "m7", "m7b5", "dim7"]);
+  function chordName(midis) {
+    if (!window.Tonal || !midis.length) return "";
+    const pcs = [...new Set(midis.map(m => SHARPS[m % 12]))];
+    if (pcs.length < 3) return "";   // a lone interval could be several chords
+    const found = Tonal.Chord.detect(pcs, { assumePerfectFifth: true });
+    const best = found.find(x => COMMON.has(x.split("/")[0].slice((Tonal.Chord.get(x).tonic || "").length))) || found[0] || "";
+    return best.replace(/M(?=\/|$)/, "").replace(/#/g, "♯").replace(/b(?=\d)/g, "♭");   // "F#M" → "F♯"
+  }
+
   // Arpeggio toggle: while on, cycle through the held chord up and back down (turning without repeating
   // the top or bottom note), one pitch per step, each in its own voice's sound. It follows the chord as
   // the line moves, and the sustained chord goes silent meanwhile.
@@ -709,10 +733,14 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function updateChord() {
     chord = holdMode && !playing ? chordAt(viewBeat) : new Set();
-    const audible = ctx && ctx.state === "running";
-    for (const [n, v] of heldVoices) if (!chord.has(n) || !audible) {
+    const audible = ctx && ctx.state === "running", now = ctx ? ctx.currentTime : 0;
+    for (const [n, v] of heldVoices) {
+      // A note that drops out keeps sounding for a moment before it fades. A finger resting near a note's
+      // start wobbles it in and out of the chord, and restarting it each time meant a fresh attack over the
+      // old one's fade, again and again: audible, and enough work to make a phone's audio crackle.
+      if (chord.has(n) && audible) { v.gone = 0; continue; }
+      if (audible && holdMode && !playing && (v.gone ||= now) > now - 0.1) continue;
       // Fast drags pile up fading voices; past a dozen, fade the newcomers quickly to spare a phone's CPU.
-      const now = ctx ? ctx.currentTime : 0;
       for (const f of fading) if (f.until <= now) fading.delete(f);
       v.release(undefined, fading.size > 12 ? 0.04 : undefined);
       fading.add(v);
@@ -721,14 +749,16 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (audible) {
       let added = false;
       for (const n of chord) if (!heldVoices.has(n)) { heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), n.tr.kind, n.tr)); added = true; }
-      if (added || chord.size !== lastChordSize) {
+      if (added || heldVoices.size !== lastChordSize) {
         // Roughly equal loudness whatever the chord size: full level up to 3 notes, then 1/sqrt(n).
-        heldBus.gain.setTargetAtTime(Math.min(1, Math.sqrt(3 / Math.max(chord.size, 1))), ctx.currentTime, 0.03);
-        lastChordSize = chord.size;
+        heldBus.gain.setTargetAtTime(Math.min(1, Math.sqrt(3 / Math.max(heldVoices.size, 1))), ctx.currentTime, 0.03);
+        lastChordSize = heldVoices.size;
       }
     }
-    const label = chord.size ? [...chord].sort((a, b) => a.midi - b.midi).map(n => noteName(n.midi)).join(" ") : "–";
+    const midis = [...chord].map(n => n.midi).sort((a, b) => a - b);
+    const label = midis.length ? midis.map(noteName).join(" ") : "–", name = chordName(midis);
     if ($("rdChord").textContent !== label) $("rdChord").textContent = label;
+    if ($("rdChordName").textContent !== name) { $("rdChordName").textContent = name; $("rdChordName").hidden = !name; }
     $("rdChordBox").hidden = !holdMode;
   }
 
