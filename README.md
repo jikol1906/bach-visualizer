@@ -2,11 +2,11 @@
 
 A scrolling piano roll for J. S. Bach's Orchestral Suite No. 2 in B minor, BWV 1067: all seven movements, from the Ouverture to the *Badinerie*. Watch the notes go by, hover any note to hear it, and drag or scroll to move through the piece.
 
-It's one static file, `index.html`. Open it in a browser, or serve it with any static host (GitHub Pages works).
+It's a static site: `index.html` plus the MIDI files in `midi/`. Serve it with any static host (GitHub Pages works), or locally with `python3 -m http.server`. Opening `index.html` straight from disk (`file://`) won't load the movements, because browsers block `fetch` there.
 
 ## The notes
 
-The app ships with all seven movements, embedded as MIDI files from John Hamm's 1995 General MIDI sequence of the Orchestral Suites: Ouverture, Rondeau, Sarabande, Bourrée I & II, Polonaise & Double, Menuet and Badinerie. Each has five parts: flute, violin I, violin II, viola and cello (continuo). All repeats are played, and Hamm added a few ornaments of his own. Pick a movement from the tabs, or link to one directly with `#ouverture`, `#rondeau`, `#sarabande`, `#bourree`, `#polonaise`, `#menuet` or `#badinerie`.
+The app ships with all seven movements, as MIDI files in `midi/`, from John Hamm's 1995 General MIDI sequence of the Orchestral Suites: Ouverture, Rondeau, Sarabande, Bourrée I & II, Polonaise & Double, Menuet and Badinerie. Each has five parts: flute, violin I, violin II, viola and cello (continuo). All repeats are played, and Hamm added a few ornaments of his own. Pick a movement from the tabs, or link to one directly with `#ouverture`, `#rondeau`, `#sarabande`, `#bourree`, `#polonaise`, `#menuet` or `#badinerie`.
 
 Playback follows each file's tempo map (the Ouverture's fast section, the closing ritardandos) and time-signature changes. The speed slider scales all of it.
 
