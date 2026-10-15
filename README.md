@@ -20,6 +20,7 @@ MIDI files rarely mark an upbeat. If the first note isn't on a barline, the app 
 
 - Hover a note to hear it, or click/tap it
 - **Hold chord** (while paused): every note under the line sustains until the line leaves it, so you can hear the harmony. The readout names the chord (`Bm`, `F♯7`, `D/F♯`…) with [Tonal](https://github.com/tonaljs/tonal), preferring common triads and seventh chords over exotic readings; offline it shows just the notes. Drag the line itself, or drag the score under it. `←` `→` step from chord to chord, `Shift` + `←` `→` jump a bar. **Arpeggio** (or `A`) toggles a running arpeggio of the held chord, up and down, that follows the line; **Arp** sets its speed (2–16 notes per second)
+- The **keyboard** under the lane lights up every note as it sounds, in its voice's colour. Press a key to play it (in the flute's sound, or the spotlit voice's), hold several for a chord, or slide along the keys for a glissando
 - `Space`: play/pause · `←` `→`: jump a bar · `Home`: back to the start
 - The **overview strip** under the lane shows the whole movement; click or drag on it to jump. Gold flags mark big tempo or metre changes (like the Ouverture's fast fugue). **Go to bar** jumps to a bar number
 - Speed, zoom, volume, loop, **reverb** amount and **space** (Room, Hall, Church) are in the control rail

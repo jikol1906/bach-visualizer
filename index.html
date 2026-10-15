@@ -15,6 +15,8 @@
   --lane-alt: #d1d9e6;
   --gilt: #9c6a14;
   --gilt-hi: #c98d1f;
+  --key-white: #fbfcfe;
+  --key-black: #1f2846;
   /* One colour per voice. v0 is the solo flute and shares the gilt accent. */
   --v0: #9c6a14; --v1: #2d6c8c; --v2: #3f8461; --v3: #8a4c7c; --v4: #a24a36; --v5: #565ba6;
   --err: #b3261e;
@@ -26,6 +28,7 @@
   :root:not([data-theme="light"]) {
     --bg: #0d1530; --surface: #131d3c; --ink: #ece5d0; --muted: #98a2c0; --line: #2a3762;
     --lane: #111a37; --lane-alt: #172249; --gilt: #d6a443; --gilt-hi: #ffd27a;
+    --key-white: #dcd6c4; --key-black: #070c1e;
     --v0: #e0ae4a; --v1: #6db4d6; --v2: #7cc69b; --v3: #cd9ad3; --v4: #ec8c70; --v5: #9fa4f0;
     --err: #ff8a80;
     color-scheme: dark;
@@ -34,6 +37,7 @@
 :root[data-theme="dark"] {
   --bg: #0d1530; --surface: #131d3c; --ink: #ece5d0; --muted: #98a2c0; --line: #2a3762;
   --lane: #111a37; --lane-alt: #172249; --gilt: #d6a443; --gilt-hi: #ffd27a;
+  --key-white: #dcd6c4; --key-black: #070c1e;
   --v0: #e0ae4a; --v1: #6db4d6; --v2: #7cc69b; --v3: #cd9ad3; --v4: #ec8c70; --v5: #9fa4f0;
   --err: #ff8a80;
   color-scheme: dark;
@@ -119,7 +123,7 @@ h1 em { color: var(--gilt); }
    programme notes stay selectable. */
 .wrap > :not(.notes) { -webkit-user-select: none; user-select: none; }
 .wrap input { -webkit-user-select: text; user-select: text; }
-.stage, .mini { -webkit-touch-callout: none; }
+.stage, .mini, .piano { -webkit-touch-callout: none; }
 .rail button, label.file {
   font: 500 .95rem var(--body); color: var(--ink); background: var(--surface);
   border: 1px solid var(--line); border-radius: 4px; padding: 7px 14px; cursor: pointer;
@@ -156,6 +160,13 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
   cursor: pointer; touch-action: pan-y;
 }
+/* The keyboard owns its touches, so a finger can slide along it for a glissando. */
+.piano {
+  display: block; width: 100%; height: 96px; margin-top: -6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  cursor: pointer; touch-action: none;
+}
+@media (max-width: 600px) { .piano { height: 72px; } }
 
 .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px 32px; color: var(--muted); font-size: .95rem; }
 .notes > div { min-width: 0; max-width: 62ch; }
@@ -192,6 +203,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <button class="unlock" id="unlock" type="button">Click once to turn on sound</button>
   </div>
 
+  <canvas class="piano" id="piano" aria-label="Piano keyboard. Keys light up in each voice's colour as its notes sound; press a key to play it."></canvas>
+
   <canvas class="mini" id="mini" aria-label="Overview of the whole movement. Click or drag to jump."></canvas>
 
   <div class="rail">
@@ -227,7 +240,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <section class="notes">
     <div>
       <h2>Playing it</h2>
-      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight: the other voices keep playing but step back. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar, <kbd>Home</kbd> goes back to the start.</p>
+      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight: the other voices keep playing but step back. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar, <kbd>Home</kbd> goes back to the start. The keyboard under the lane lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along.</p>
       <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
@@ -538,7 +551,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   }
 
   // dur = Infinity makes a held voice: it sustains until release() is called on what this returns.
-  function voice(midi, when, dur, vel = 0.8, kind = "wind", tr = null) {
+  function voice(midi, when, dur, vel = 0.8, kind = "wind", tr = null, dest = null) {
     if (!ctx) return null;
     const f = 440 * 2 ** ((midi - 69) / 12);
     const wind = kind === "wind", held = dur === Infinity;
@@ -559,7 +572,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     // Held voices fade out through their own gain, which only ever ramps from 1 to 0. That avoids cancelling
     // the envelope mid-ramp, which some browsers (Safari) answer with a jump in level, heard as a click.
     const rg = held ? mk(ctx.createGain()) : null;
-    const out = tr ? busFor(tr, held) : held ? heldBus : master;
+    const out = dest || (tr ? busFor(tr, held) : held ? heldBus : master);
     if (held) g.connect(rg).connect(out); else g.connect(out);
 
     // Vibrato that only blooms on longer notes.
@@ -847,7 +860,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function readColors() {
     const cs = getComputedStyle(document.documentElement);
-    for (const k of ["surface", "ink", "muted", "line", "lane", "lane-alt", "gilt-hi", "v0", "v1", "v2", "v3", "v4", "v5"]) colors[k] = cs.getPropertyValue("--" + k).trim();
+    for (const k of ["surface", "ink", "muted", "line", "lane", "lane-alt", "gilt-hi", "key-white", "key-black", "v0", "v1", "v2", "v3", "v4", "v5"]) colors[k] = cs.getPropertyValue("--" + k).trim();
     colors.ver = (colors.ver || 0) + 1;   // lets cached drawings know the theme changed
   }
   readColors();
@@ -1089,9 +1102,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     c.fillStyle = colors.surface; c.fillRect(0, 0, GUTTER, H);
     c.fillStyle = colors.line; c.fillRect(GUTTER - 1, 0, 1, H);
     c.textAlign = "right";
-    const sounding = new Set();
-    if (holding) for (const n of chord) sounding.add(n.midi);
-    else for (let i = firstAtOrAfter(notes, now - 8); i < notes.length && notes[i].start <= now; i++) if (now < notes[i].start + notes[i].dur) sounding.add(notes[i].midi);
+    // midi -> the voice to colour it by: the spotlit voice wins a shared pitch, then the higher voice.
+    const sounding = new Map(), rank = tr => tr === spot ? -1 : song.tracks.indexOf(tr);
+    const claim = n => { const cur = sounding.get(n.midi); if (!cur || rank(n.tr) < rank(cur)) sounding.set(n.midi, n.tr); };
+    if (holding) for (const n of chord) claim(n);
+    else for (let i = firstAtOrAfter(notes, now - 8); i < notes.length && notes[i].start <= now; i++) if (now < notes[i].start + notes[i].dur) claim(notes[i]);
     c.font = `400 ${Math.max(8, Math.min(12, lh * 0.8))}px 'IBM Plex Mono', monospace`;
     for (let m = lo; m <= hi; m++) {
       if (lh < 12 && BLACK.has(m % 12)) continue;
@@ -1101,6 +1116,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
 
     drawMini(now, b0, b1);
+    drawPiano(sounding);
 
     // Readouts
     const bi = barInfo(now);
@@ -1146,6 +1162,97 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       tip.hidden = false;
     } else tip.hidden = true;
   }
+
+  // ---------- Piano: lights up what's sounding; press a key to play it ----------
+  // It spans whole octaves around the movement's range. Each pointer (mouse or finger) holds one key and
+  // can slide to the next, so several fingers make a chord and a drag makes a glissando.
+  const piano = $("piano"), p2 = piano.getContext("2d");
+  let PW = 0, PH = 0, keyRects = new Map(), keyLayout = "";
+  const pressed = new Map();   // pointerId -> { midi, v }; midi is null while slid off the keys
+  function pianoResize() {
+    const r = piano.getBoundingClientRect();
+    PW = r.width; PH = r.height;
+    piano.width = Math.round(PW * dpr); piano.height = Math.round(PH * dpr);
+  }
+  new ResizeObserver(pianoResize).observe(piano);
+  const blackH = () => PH * 0.62;
+
+  function layoutKeys() {
+    const pLo = Math.floor((lo + 1) / 12) * 12, pHi = Math.ceil(hi / 12) * 12 - 1;   // C below the lowest note to B above the highest
+    const id = `${PW}:${pLo}:${pHi}`;
+    if (id === keyLayout) return;
+    keyLayout = id; keyRects = new Map();
+    const whites = [];
+    for (let m = pLo; m <= pHi; m++) if (!BLACK.has(m % 12)) whites.push(m);
+    const ww = PW / whites.length, bw = ww * 0.6;
+    whites.forEach((m, i) => keyRects.set(m, { x: i * ww, w: ww, black: false }));
+    for (let m = pLo; m <= pHi; m++) if (BLACK.has(m % 12)) { const left = keyRects.get(m - 1); keyRects.set(m, { x: left.x + left.w - bw / 2, w: bw, black: true }); }
+  }
+
+  function keyAt(x, y) {
+    if (y < 0 || y > PH) return null;
+    let white = null;
+    for (const [m, k] of keyRects) {
+      if (x < k.x || x >= k.x + k.w) continue;
+      if (k.black) { if (y < blackH()) return m; } else white = m;
+    }
+    return white;
+  }
+
+  function drawPiano(sounding) {
+    if (!PW) return;
+    layoutKeys();
+    const c = p2, bh = blackH();
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, PW, PH);
+    const mine = new Set([...pressed.values()].map(p => p.midi));
+    const fill = (m, base) => mine.has(m) ? colors.muted : sounding.has(m) ? colors["v" + sounding.get(m).color] : base;
+    c.font = "500 9px 'IBM Plex Mono', monospace"; c.textAlign = "center"; c.textBaseline = "alphabetic";
+    for (const [m, k] of keyRects) {
+      if (k.black) continue;
+      const lit = mine.has(m) || sounding.has(m);
+      c.fillStyle = fill(m, colors["key-white"]);
+      c.fillRect(k.x, 0, k.w, PH);
+      c.fillStyle = colors.line; c.fillRect(Math.round(k.x), 0, 1, PH);
+      if (m % 12 === 0 && k.w >= 12) { c.fillStyle = lit ? colors.surface : colors.muted; c.fillText(noteName(m), k.x + k.w / 2, PH - 6); }
+    }
+    for (const [m, k] of keyRects) {
+      if (!k.black) continue;
+      c.fillStyle = fill(m, colors["key-black"]);
+      c.beginPath(); c.roundRect(k.x, -2, k.w, bh + 2, [0, 0, 3, 3]); c.fill();
+    }
+    // The arpeggio's current note gets an outline, as in the lane.
+    const a = arpMidi != null && keyRects.get(arpMidi);
+    if (a) { c.strokeStyle = colors.ink; c.lineWidth = 2; c.strokeRect(a.x + 1, 1, a.w - 2, (a.black ? bh : PH) - 2); }
+    // A gilt rule along the top edge, like the felt strip above the keys.
+    c.fillStyle = colors["gilt-hi"]; c.fillRect(0, 0, PW, 2);
+  }
+
+  // Keys sound in the lead voice's timbre (the flute, or the spotlit voice) and straight into the mix,
+  // so Hold chord's level and the arpeggio's muting don't touch them.
+  function pressKey(id, m) {
+    const cur = pressed.get(id);
+    if (cur && cur.midi === m) return;
+    if (cur && cur.v) cur.v.release();
+    const kind = song ? song.tracks[leadIdx].kind : "wind";
+    pressed.set(id, { midi: m, v: m == null || !ctx ? null : voice(m, ctx.currentTime + 0.005, Infinity, 0.8, kind, null, master) });
+  }
+  function liftKey(id) {
+    const cur = pressed.get(id);
+    if (cur && cur.v) cur.v.release();
+    pressed.delete(id);
+  }
+  const pianoKey = e => { const r = piano.getBoundingClientRect(); return keyAt(e.clientX - r.left, e.clientY - r.top); };
+  piano.addEventListener("pointerdown", e => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.preventDefault();
+    ensureAudio();
+    piano.setPointerCapture(e.pointerId);
+    pressKey(e.pointerId, pianoKey(e));
+  });
+  piano.addEventListener("pointermove", e => { if (pressed.has(e.pointerId)) pressKey(e.pointerId, pianoKey(e)); });
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) piano.addEventListener(type, e => liftKey(e.pointerId));
+  window.addEventListener("blur", () => { for (const id of [...pressed.keys()]) liftKey(id); });
 
   // ---------- Input ----------
   let dragging = false, lineDrag = false, downX = 0, downBeat = 0, moved = false;
