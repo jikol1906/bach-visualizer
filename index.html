@@ -66,6 +66,7 @@ h1 em { color: var(--gilt); }
   border-bottom: 2px solid transparent; padding: 4px 0; margin-bottom: -3px; cursor: pointer;
 }
 .movements button .num { font: 500 .72rem var(--mono); margin-right: 6px; vertical-align: 2px; }
+.movements .sep { align-self: stretch; width: 1px; background: var(--line); margin: 6px 0; }
 .movements button:hover { color: var(--ink); }
 .movements button[aria-current="true"] { color: var(--ink); border-bottom-color: var(--gilt); }
 .movements button[aria-current="true"] .num { color: var(--gilt); }
@@ -197,7 +198,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <header>
     <div>
       <h1><span id="mvTitle">Badinerie</span> <em>in Motion</em></h1>
-      <p class="byline">J. S. Bach · Orchestral Suite No. 2 in B minor, BWV 1067</p>
+      <p class="byline" id="byline">J. S. Bach · Orchestral Suite No. 2 in B minor, BWV 1067</p>
     </div>
     <div class="readout" aria-live="off">
       <span>Bar <b id="rdBar">1</b></span>
@@ -206,7 +207,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     </div>
   </header>
 
-  <nav class="movements" id="movements" aria-label="Movements of the suite"></nav>
+  <nav class="movements" id="movements" aria-label="Movements and pieces"></nav>
 
   <div class="voices" id="voices" role="group" aria-label="Voices"></div>
   <button type="button" class="clearspot" id="clearSpot" hidden>Clear spotlight</button>
@@ -282,7 +283,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     </div>
     <div>
       <h2>About the notes</h2>
-      <p>All seven movements come from John Hamm's General MIDI sequence of the Orchestral Suites (1995), with five parts each: flute, violin I, violin II, viola and cello. The cello plays the continuo bass. All repeats are played, the tempo follows Hamm's own changes and ritardandos, and he added a few ornaments of his own.</p>
+      <p id="aboutSrc">All seven movements come from John Hamm's General MIDI sequence of the Orchestral Suites (1995), with five parts each: flute, violin I, violin II, viola and cello. The cello plays the continuo bass. All repeats are played, the tempo follows Hamm's own changes and ritardandos, and he added a few ornaments of his own.</p>
       <p>You can load any other MIDI file with <em>Load MIDI</em> or by dropping it onto the lane. Each track becomes a voice. More scores: <a href="https://imslp.org/wiki/Orchestral_Suite_No.2_in_B_minor,_BWV_1067_(Bach,_Johann_Sebastian)" target="_blank" rel="noopener">IMSLP</a>.</p>
     </div>
     <div>
@@ -306,6 +307,12 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }).catch(err => { midiCache.delete(mv.slug); throw err; }));
     return midiCache.get(mv.slug);
   };
+  // Pieces default to the suite. A piece from elsewhere sets its own byline, credit line and source note.
+  const SUITE = {
+    byline: "J. S. Bach · Orchestral Suite No. 2 in B minor, BWV 1067",
+    credit: mv => `${mv.title}, flute and strings (John Hamm, 1995)`,
+    source: document.getElementById("aboutSrc").textContent,
+  };
   const MOVEMENTS = [
     { id: "OVERTURE", slug: "ouverture", title: "Ouverture",
       about: "A French overture. A slow, stately opening full of dotted rhythms leads into a fast fugal section where the flute often steps out as a soloist, and the slow music returns at the end." },
@@ -321,6 +328,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       about: "A short minuet in triple time, with the flute doubling the first violins." },
     { id: "BADINERI", slug: "badinerie", title: "Badinerie",
       about: "The last movement, a quick showpiece for the flute in 2/4 and in binary form. The A section (16 bars) ends in F♯ minor and the B section (24 bars) returns to B minor. Each half is repeated, and it opens with a quarter-note pickup." },
+    { id: "FUGUE", slug: "fugue", title: "Great Fugue", piece: true,
+      byline: "J. S. Bach · Fantasia and Fugue in G minor, BWV 542: the Fugue",
+      credit: () => "Fugue in G minor, BWV 542 (Mutopia Project)",
+      source: "The fugue comes from the Mutopia Project's LilyPond engraving of the organ work (piece 984). It is a plain organ-style MIDI, so the voices are the two hands and the pedal, not the fugue's four voices: each hand plays more than one line, and its lines share a colour. The organ's octave-coupler tracks were left out, since they only repeat the notes an octave away. The sound is the app's bowed strings, not an organ.",
+      about: "The Great Fugue, an organ fugue with a long, running subject that enters alone in the right hand. The left hand answers it, and then the pedal takes it up in the bass. This is the fugue only; the Fantasia that precedes it isn't included." },
   ];
 
   const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
@@ -1592,7 +1604,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
     if (token !== loadToken) return; // another movement or file was picked meanwhile
     $("srcErr").textContent = "";
-    loadSong(parseMidi(buf), `${mv.title}, flute and strings (John Hamm, 1995)`);
+    const info = { ...SUITE, ...mv };
+    loadSong(parseMidi(buf), info.credit(mv));
+    $("byline").textContent = info.byline;
+    $("aboutSrc").textContent = info.source;
     $("mvTitle").textContent = mv.title;
     $("pieceNote").textContent = `${mv.about} The file is in ${song.sig}.`;
     for (const b of document.querySelectorAll("#movements button")) b.setAttribute("aria-current", String(b.dataset.id === mv.id));
@@ -1601,7 +1616,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   MOVEMENTS.forEach((mv, i) => {
     const b = document.createElement("button");
     b.type = "button"; b.dataset.id = mv.id;
-    b.innerHTML = `<span class="num">${i + 1}</span>`;
+    if (mv.piece) {
+      const sep = document.createElement("span");
+      sep.className = "sep"; sep.setAttribute("aria-hidden", "true");
+      $("movements").append(sep);
+    } else b.innerHTML = `<span class="num">${i + 1}</span>`;
     b.append(mv.title);
     b.addEventListener("click", () => showMovement(mv));
     $("movements").append(b);
@@ -1630,7 +1649,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   if (window.matchMedia("(max-width: 600px)").matches) { pxPerBeat = 100; $("zoom").value = 100; }
 
   const fromHash = MOVEMENTS.find(m => "#" + m.slug === location.hash);
-  showMovement(fromHash || MOVEMENTS[MOVEMENTS.length - 1]);
+  showMovement(fromHash || MOVEMENTS.find(m => m.slug === "badinerie"));
   resize();
   requestAnimationFrame(draw);
 })();

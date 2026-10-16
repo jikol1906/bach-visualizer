@@ -6,7 +6,9 @@ It's a static site: `index.html` plus the MIDI files in `midi/`. Serve it with a
 
 ## The notes
 
-The app ships with all seven movements, as MIDI files in `midi/`, from John Hamm's 1995 General MIDI sequence of the Orchestral Suites: Ouverture, Rondeau, Sarabande, Bourrée I & II, Polonaise & Double, Menuet and Badinerie. Each has five parts: flute, violin I, violin II, viola and cello (continuo). All repeats are played, and Hamm added a few ornaments of his own. Pick a movement from the tabs, or link to one directly with `#ouverture`, `#rondeau`, `#sarabande`, `#bourree`, `#polonaise`, `#menuet` or `#badinerie`.
+The app ships with all seven movements, as MIDI files in `midi/`, from John Hamm's 1995 General MIDI sequence of the Orchestral Suites: Ouverture, Rondeau, Sarabande, Bourrée I & II, Polonaise & Double, Menuet and Badinerie. Each has five parts: flute, violin I, violin II, viola and cello (continuo). All repeats are played, and Hamm added a few ornaments of his own. Pick a movement from the tabs, or link to one directly with `#ouverture`, `#rondeau`, `#sarabande`, `#bourree`, `#polonaise`, `#menuet` or `#badinerie` (the fugue below has its own `#fugue`).
+
+There's also a tab for the **Great Fugue** from the Fantasia and Fugue in G minor, BWV 542 (`midi/fugue.mid`, link `#fugue`). It comes from the [Mutopia Project](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=984)'s LilyPond engraving of the organ piece, so its voices are the two hands and the pedal, not the fugue's four voices. The source file also had octave-coupler tracks (the same notes again an octave up or down), which were left out. It plays on the app's bowed-string sound, not an organ. Only the Fugue is included, not the Fantasia.
 
 Playback follows each file's tempo map (the Ouverture's fast section, the closing ritardandos) and time-signature changes. The speed slider scales all of it.
 
