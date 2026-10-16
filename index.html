@@ -859,11 +859,24 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
   }
 
+  // Keep the screen on while playing. The browser drops the lock whenever the tab is hidden, so re-request on return.
+  let wakeLock = null;
+  async function keepAwake() {
+    if (wakeLock || !navigator.wakeLock) return;
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } catch (e) { /* denied or unsupported: playback still works */ }
+  }
+  function letSleep() { if (wakeLock) wakeLock.release().catch(() => {}); wakeLock = null; }
+  document.addEventListener("visibilitychange", () => { if (playing && document.visibilityState === "visible") keepAwake(); });
+
   function play() {
     if (!notes.length || !ensureAudio()) return;
     if (viewBeat >= endBeat) viewBeat = startBeat - 0.25;
     anchor(viewBeat);
     playing = true;
+    keepAwake();
     timer = setInterval(schedule, 25);
     schedule();
     $("play").textContent = "Pause";
@@ -875,6 +888,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     playing = false;
     clearInterval(timer);
     stopAll();
+    letSleep();
     $("play").textContent = "Play";
   }
 
