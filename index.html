@@ -88,7 +88,13 @@ h1 em { color: var(--gilt); }
 }
 .spot:hover { color: var(--ink); border-color: var(--c); }
 .spot[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: var(--surface); }
-.spot:focus-visible, .chip:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
+.clearspot {
+  font: 500 .85rem var(--body); color: var(--muted); background: none; cursor: pointer;
+  border: 1px dashed var(--line); border-radius: 999px; padding: 4px 12px;
+}
+.clearspot:hover { color: var(--ink); border-color: var(--ink); }
+.clearspot[hidden] { display: none; }
+.spot:focus-visible, .chip:focus-visible, .clearspot:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
 .stage {
   position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
@@ -203,6 +209,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <nav class="movements" id="movements" aria-label="Movements of the suite"></nav>
 
   <div class="voices" id="voices" role="group" aria-label="Voices"></div>
+  <button type="button" class="clearspot" id="clearSpot" hidden>Clear spotlight</button>
 
   <div class="stage" id="stage">
     <canvas id="cv" aria-label="Scrolling piano roll of every voice. Hover a note to hear it."></canvas>
@@ -269,7 +276,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <section class="notes">
     <div>
       <h2>Playing it</h2>
-      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight: the other voices keep playing but step back. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1 bar</em> and <em>−5 bars</em>), <kbd>Home</kbd> goes back to the start. <em>Piano</em> and <em>Guitar</em> show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
+      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1 bar</em> and <em>−5 bars</em>), <kbd>Home</kbd> goes back to the start. <em>Piano</em> and <em>Guitar</em> show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
       <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
@@ -453,7 +460,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
         if (tr.on && song.tracks.filter(x => x.on).length === 1) return;   // keep at least one voice
         tr.on = !tr.on;
         b.setAttribute("aria-pressed", String(tr.on));
-        if (!tr.on && spot === tr) setSpotlight(null);
+        if (!tr.on && spot.has(tr)) setSpotlight(tr, false);
         const at = beatNow();
         rebuild();
         if (playing) { stopAll(); anchor(at); }
@@ -466,22 +473,23 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       sp.textContent = "◎";
       sp.addEventListener("click", () => {
         if (!tr.on) { tr.on = true; b.setAttribute("aria-pressed", "true"); rebuild(); if (playing) { const at = beatNow(); stopAll(); anchor(at); } }
-        setSpotlight(spot === tr ? null : tr);
+        setSpotlight(tr, !spot.has(tr));
       });
       wrap.append(b, sp);
       box.append(wrap);
     });
   }
 
-  // Spotlight: one voice keeps its full level and drawing; the others step back (quieter, faded).
-  let spot = null;
+  // Spotlight: any number of voices keep their full level and drawing; the others step back (quieter, faded).
+  const spot = new Set();
   const SPOT_DIM = 0.3;
-  const focusGain = tr => !spot || tr === spot ? 1 : SPOT_DIM;
-  function setSpotlight(tr) {
-    spot = tr;
+  const focusGain = tr => !spot.size || spot.has(tr) ? 1 : SPOT_DIM;
+  function setSpotlight(tr, on) {
+    if (tr) { if (on) spot.add(tr); else spot.delete(tr); } else spot.clear();
     for (const t of song.tracks) for (const bus of [t.bus, t.hbus]) if (bus) bus.gain.setTargetAtTime(focusGain(t), ctx.currentTime, 0.05);
-    for (const el of document.querySelectorAll("#voices .spot")) el.setAttribute("aria-pressed", String(!!tr && el.dataset.track === tr.name));
-    leadIdx = tr ? song.tracks.indexOf(tr) : 0;
+    for (const el of document.querySelectorAll("#voices .spot")) el.setAttribute("aria-pressed", String(song.tracks.some(t => spot.has(t) && t.name === el.dataset.track)));
+    $("clearSpot").hidden = !spot.size;
+    leadIdx = spot.size ? Math.min(...[...spot].map(t => song.tracks.indexOf(t))) : 0;
     $("rdLeadName").textContent = song.tracks[leadIdx].name;
     miniDirty = true;
   }
@@ -491,6 +499,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (!tr[k]) { tr[k] = ctx.createGain(); tr[k].gain.value = focusGain(tr); tr[k].connect(held ? heldBus : master); }
     return tr[k];
   }
+
+  $("clearSpot").addEventListener("click", () => setSpotlight(null));
 
   function loadSong(s, label) {
     stopAll();
@@ -509,7 +519,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       tr.mono = overlaps < tr.notes.length * 0.05;
       for (const n of tr.notes) n.tr = tr;
     });
-    leadIdx = 0; spot = null;
+    leadIdx = 0; spot.clear(); $("clearSpot").hidden = true;
     const all = s.tracks.flatMap(tr => tr.notes);
     lo = Math.min(...all.map(n => n.midi)) - 1;
     hi = Math.max(...all.map(n => n.midi)) + 1;
@@ -961,7 +971,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       const tr = song.tracks[t];
       if (!tr.on) continue;
       c.fillStyle = colors["v" + tr.color];
-      c.globalAlpha = spot && tr !== spot ? 0.25 : 1;
+      c.globalAlpha = spot.size && !spot.has(tr) ? 0.25 : 1;
       for (const n of tr.notes) {
         const x = mx(n.start), w = Math.max(1, mx(n.start + n.dur) - x);
         c.fillRect(x, MTOP + (hi - n.midi) / (hi - lo + 1) * h, w, ph);
@@ -1018,7 +1028,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   // Lower voices first so higher ones sit on top; a spotlit voice always goes last.
   function drawOrder() {
     const order = song.tracks.map((_, i) => i).reverse();
-    return spot ? order.filter(i => song.tracks[i] !== spot).concat(song.tracks.indexOf(spot)) : order;
+    return spot.size ? order.filter(i => !spot.has(song.tracks[i])).concat(order.filter(i => spot.has(song.tracks[i]))) : order;
   }
   function barInfo(b) {
     const bar = song.bars[barIdx(b)];
@@ -1084,7 +1094,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
         if (!started) { c.moveTo(x, y); started = true; } else c.lineTo(x, y);
       }
       c.strokeStyle = colors["v" + tr.color];
-      c.globalAlpha = spot ? (tr === spot ? 0.75 : 0.12) : 0.3; c.lineWidth = tr === spot ? 1.6 : 1;
+      c.globalAlpha = spot.size ? (spot.has(tr) ? 0.75 : 0.12) : 0.3; c.lineWidth = spot.has(tr) ? 1.6 : 1;
       c.stroke(); c.globalAlpha = 1;
     }
 
@@ -1097,7 +1107,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     for (const t of drawOrder()) {
       const tr = song.tracks[t];
       if (!tr.on) continue;
-      const fade = spot && tr !== spot ? 0.28 : 1;
+      const fade = spot.size && !spot.has(tr) ? 0.28 : 1;
       const col = colors["v" + tr.color];
       for (let i = firstAtOrAfter(tr.notes, b0 - 8); i < tr.notes.length && tr.notes[i].start < b1; i++) {
         const n = tr.notes[i], x = xOf(n.start, now), w = Math.max(n.dur * pxPerBeat - 3, 3), y = yOf(n.midi) + 1;
@@ -1131,8 +1141,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     c.fillStyle = colors.surface; c.fillRect(0, 0, GUTTER, H);
     c.fillStyle = colors.line; c.fillRect(GUTTER - 1, 0, 1, H);
     c.textAlign = "right";
-    // midi -> the voice to colour it by: the spotlit voice wins a shared pitch, then the higher voice.
-    const sounding = new Map(), rank = tr => tr === spot ? -1 : song.tracks.indexOf(tr);
+    // midi -> the voice to colour it by: a spotlit voice wins a shared pitch, then the higher voice.
+    const sounding = new Map(), rank = tr => spot.has(tr) ? -1 : song.tracks.indexOf(tr);
     const claim = n => { const cur = sounding.get(n.midi); if (!cur || rank(n.tr) < rank(cur)) sounding.set(n.midi, n.tr); };
     if (holding) for (const n of chord) claim(n);
     else for (let i = firstAtOrAfter(notes, now - 8); i < notes.length && notes[i].start <= now; i++) if (now < notes[i].start + notes[i].dur) claim(notes[i]);
@@ -1377,7 +1387,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     c.textAlign = "center"; c.font = `500 ${Math.round(r * 1.05)}px 'IBM Plex Mono', monospace`;
     for (const n of placeNotes(bd, items)) {
       const x = slotX(bd, n.f), y = stringY(bd, n.s), col = n.mine ? colors.muted : colors["v" + n.tr.color];
-      c.globalAlpha = !n.mine && spot && n.tr !== spot ? 0.35 : 1;
+      c.globalAlpha = !n.mine && spot.size && !spot.has(n.tr) ? 0.35 : 1;
       c.shadowColor = col; c.shadowBlur = n.mine ? 0 : 10;
       c.fillStyle = col; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
       c.shadowBlur = 0;
