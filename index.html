@@ -559,6 +559,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   const vol = () => (Number($("vol").value) / 100) ** 1.5;
 
   function ensureAudio() {
+    if (ctx && ctx.state === "closed") resetAudio();
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return false;
@@ -584,9 +585,38 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       wet.gain.value = revAmount();
       master.connect(rev).connect(wet).connect(comp);
     }
-    if (ctx.state === "suspended") ctx.resume();
+    // Not just "suspended": iOS leaves the context "interrupted" after you switch apps, and its clock stays
+    // frozen until resumed, so nothing would play. Some iOS versions never finish that resume, so if the
+    // context is still interrupted a moment later, throw it away and build a fresh one.
+    if (ctx.state !== "running") {
+      const stuck = ctx;
+      stuck.resume().catch(() => {});
+      setTimeout(() => {
+        if (ctx !== stuck || stuck.state !== "interrupted") return;
+        const was = playing;
+        if (was) pause();
+        resetAudio();
+        ensureAudio();
+        if (was) play(); else updateChord();
+        // Made outside a tap, the new context may start suspended; then it needs one more tap to sound.
+        if (ctx.state !== "running") $("unlock").hidden = false;
+      }, 500);
+    }
+    ctx.onstatechange = () => { if (ctx && ctx.state !== "running" && playing) pause(); };   // e.g. app switched on iOS
     $("unlock").hidden = true;
     return true;
+  }
+
+  // Drop the audio graph so ensureAudio() builds a new one; the old context's nodes are unusable in a new one.
+  function resetAudio() {
+    if (!ctx) return;
+    if (ctx.state !== "closed") stopAll();
+    voices.clear(); heldVoices.clear(); fading.clear();
+    ctx.onstatechange = null;
+    try { ctx.close().catch(() => {}); } catch (e) { /* already closed */ }
+    ctx = null;
+    if (song) for (const t of song.tracks) t.bus = t.hbus = null;
+    ducked = false; lastChordSize = 0;
   }
 
   // dur = Infinity makes a held voice: it sustains until release() is called on what this returns.
