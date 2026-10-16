@@ -88,7 +88,13 @@ h1 em { color: var(--gilt); }
 }
 .spot:hover { color: var(--ink); border-color: var(--c); }
 .spot[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: var(--surface); }
-.spot:focus-visible, .chip:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
+.clearspot {
+  font: 500 .85rem var(--body); color: var(--muted); background: none; cursor: pointer;
+  border: 1px dashed var(--line); border-radius: 999px; padding: 4px 12px;
+}
+.clearspot:hover { color: var(--ink); border-color: var(--ink); }
+.clearspot[hidden] { display: none; }
+.spot:focus-visible, .chip:focus-visible, .clearspot:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
 .stage {
   position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
@@ -203,6 +209,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <nav class="movements" id="movements" aria-label="Movements of the suite"></nav>
 
   <div class="voices" id="voices" role="group" aria-label="Voices"></div>
+  <button type="button" class="clearspot" id="clearSpot" hidden>Clear spotlight</button>
 
   <div class="stage" id="stage">
     <canvas id="cv" aria-label="Scrolling piano roll of every voice. Hover a note to hear it."></canvas>
@@ -481,6 +488,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (tr) { if (on) spot.add(tr); else spot.delete(tr); } else spot.clear();
     for (const t of song.tracks) for (const bus of [t.bus, t.hbus]) if (bus) bus.gain.setTargetAtTime(focusGain(t), ctx.currentTime, 0.05);
     for (const el of document.querySelectorAll("#voices .spot")) el.setAttribute("aria-pressed", String(song.tracks.some(t => spot.has(t) && t.name === el.dataset.track)));
+    $("clearSpot").hidden = !spot.size;
     leadIdx = spot.size ? Math.min(...[...spot].map(t => song.tracks.indexOf(t))) : 0;
     $("rdLeadName").textContent = song.tracks[leadIdx].name;
     miniDirty = true;
@@ -491,6 +499,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (!tr[k]) { tr[k] = ctx.createGain(); tr[k].gain.value = focusGain(tr); tr[k].connect(held ? heldBus : master); }
     return tr[k];
   }
+
+  $("clearSpot").addEventListener("click", () => setSpotlight(null));
 
   function loadSong(s, label) {
     stopAll();
@@ -509,7 +519,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       tr.mono = overlaps < tr.notes.length * 0.05;
       for (const n of tr.notes) n.tr = tr;
     });
-    leadIdx = 0; spot.clear();
+    leadIdx = 0; spot.clear(); $("clearSpot").hidden = true;
     const all = s.tracks.flatMap(tr => tr.notes);
     lo = Math.min(...all.map(n => n.midi)) - 1;
     hi = Math.max(...all.map(n => n.midi)) + 1;
