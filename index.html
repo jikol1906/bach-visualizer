@@ -133,8 +133,6 @@ h1 em { color: var(--gilt); }
 .rail button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
 .rail button[aria-pressed="true"] { background: var(--gilt); border-color: var(--gilt); color: var(--surface); }
 .stage.line canvas { cursor: ew-resize; }
-/* While holding chords, the lane owns every touch gesture so the page doesn't scroll under the finger. */
-.stage.holding canvas { touch-action: none; }
 .chordtag {
   position: absolute; top: 32px; right: 10px; z-index: 2; pointer-events: none;
   max-width: calc(100% - 72px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -160,12 +158,13 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
   cursor: pointer; touch-action: pan-y;
 }
-/* The keyboard owns its touches, so a finger can slide along it for a glissando. */
+/* A finger can slide along the keys for a glissando; a vertical swipe still scrolls the page. */
 .piano {
   display: block; width: 100%; height: 96px; margin-top: -6px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
-  cursor: pointer; touch-action: none;
+  cursor: pointer; touch-action: pan-y;
 }
+.piano[hidden], .guitar[hidden] { display: none; }
 @media (max-width: 600px) { .piano { height: 72px; } }
 .guitar { display: grid; gap: 4px; }
 .fbhead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 30px; }
@@ -173,7 +172,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 .fret {
   display: block; width: 100%; height: 124px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
-  cursor: pointer; touch-action: none;
+  cursor: pointer; touch-action: pan-y;
 }
 @media (max-width: 600px) { .fret { height: 108px; } }
 
@@ -212,9 +211,9 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <button class="unlock" id="unlock" type="button">Click once to turn on sound</button>
   </div>
 
-  <canvas class="piano" id="piano" aria-label="Piano keyboard. Keys light up in each voice's colour as its notes sound; press a key to play it."></canvas>
+  <canvas class="piano" id="piano" hidden aria-label="Piano keyboard. Keys light up in each voice's colour as its notes sound; press a key to play it."></canvas>
 
-  <div class="guitar">
+  <div class="guitar" id="guitar" hidden>
     <div class="fbhead"><span class="ctl">Guitar</span><span class="tune">E A D G B E · standard</span></div>
     <canvas class="fret" id="fret0" aria-label="Guitar fretboard in standard tuning. Sounding notes light up in each voice's colour; press a fret to play it."></canvas>
     <div class="fbhead">
@@ -235,6 +234,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <div class="group">
       <button class="primary" id="play" type="button">Play</button>
       <button id="restart" type="button">Restart</button>
+      <button id="back5" type="button" title="Jump back 5 bars">−5 bars</button>
+      <button id="back1" type="button" title="Jump back 1 bar">−1 bar</button>
       <button id="hold" type="button" aria-pressed="false" title="While paused, sustain every note under the line">Hold chord</button>
       <button id="arp" type="button" disabled aria-pressed="false" title="Keep arpeggiating the held chord, up and down (A)">Arpeggio</button>
       <label class="group ctl" for="arpRate" title="Arpeggio speed, in notes per second">Arp <input id="arpRate" type="range" min="2" max="16" step="0.5" value="6"><output id="arpOut">6/s</output></label>
@@ -255,6 +256,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       <label for="goBar">Go to bar</label>
       <input id="goBar" type="number" min="1" inputmode="numeric" placeholder="1">
     </form>
+    <div class="group">
+      <button id="showPiano" type="button" aria-pressed="false" aria-controls="piano">Piano</button>
+      <button id="showGuitar" type="button" aria-pressed="false" aria-controls="guitar">Guitar</button>
+    </div>
     <span class="spacer"></span>
     <div class="group">
       <label class="file" for="midi">Load MIDI…<input id="midi" type="file" accept=".mid,.midi,audio/midi"></label>
@@ -264,7 +269,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <section class="notes">
     <div>
       <h2>Playing it</h2>
-      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight: the other voices keep playing but step back. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar, <kbd>Home</kbd> goes back to the start. The keyboard under the lane lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
+      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight: the other voices keep playing but step back. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1 bar</em> and <em>−5 bars</em>), <kbd>Home</kbd> goes back to the start. <em>Piano</em> and <em>Guitar</em> show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
       <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
@@ -1393,41 +1398,20 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     headFrac = (nx - GUTTER) / (W - GUTTER);
   }
 
-  // In Hold chord mode the lane takes every touch gesture (so the page can't wobble), which would leave a
-  // phone almost nothing to scroll by. So a touch picks an axis after its first few pixels: mostly
-  // vertical scrolls the page ourselves, with momentum; mostly horizontal moves the score or the line.
-  let gest = null, glide = 0;
-  const ownsTouch = e => e.pointerType === "touch" && holdMode;
-  function startGlide(v) {
-    cancelAnimationFrame(glide);
-    let last = performance.now();
-    const step = t => {
-      const dt = t - last; last = t;
-      window.scrollBy(0, v * dt);
-      v *= 0.95 ** (dt / 16);
-      if (Math.abs(v) > 0.02) glide = requestAnimationFrame(step);
-    };
-    glide = requestAnimationFrame(step);
-  }
+  // On a touch screen the browser keeps vertical swipes for scrolling the page (touch-action: pan-y) and
+  // cancels our pointer once it takes one. So a touch neither moves the score or the line nor plays a note
+  // until it has clearly gone sideways, and a cancelled touch never counts as a tap.
+  let touch = null;   // { x0, y0, axis } while a finger is down on the lane
 
   cv.addEventListener("pointermove", e => {
     const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
-    pointer = { x, y };
-    if (gest) {
-      if (!gest.axis) {
-        const dx = e.clientX - gest.x0, dy = e.clientY - gest.y0;
-        if (Math.hypot(dx, dy) < 8) return;
-        gest.axis = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
-        if (gest.axis === "y") { lineDrag = false; dragging = false; stage.classList.remove("dragging"); hover = null; tip.hidden = true; }
-      }
-      if (gest.axis === "y") {
-        const now = performance.now(), d = gest.lastY - e.clientY;
-        window.scrollBy(0, d);
-        gest.v = 0.8 * gest.v + 0.2 * d / Math.max(1, now - gest.t);
-        gest.lastY = e.clientY; gest.t = now;
-        return;
-      }
+    if (touch && !touch.axis) {
+      const dx = e.clientX - touch.x0, dy = e.clientY - touch.y0;
+      if (Math.hypot(dx, dy) < 8) return;
+      touch.axis = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
     }
+    if (touch && touch.axis === "y") return;
+    pointer = { x, y };
     if (lineDrag) { moveLine(x); return; }
     if (dragging) {
       if (Math.abs(x - downX) > 4) moved = true;
@@ -1441,21 +1425,21 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   cv.addEventListener("pointerdown", e => {
     ensureAudio();
     const r = cv.getBoundingClientRect(), x = e.clientX - r.left;
-    cv.setPointerCapture(e.pointerId);
-    cancelAnimationFrame(glide);
-    gest = ownsTouch(e) ? { x0: e.clientX, y0: e.clientY, lastY: e.clientY, t: performance.now(), v: 0, axis: null } : null;
-    if (nearLine(x, e.pointerType === "touch")) { lineDrag = true; hover = null; tip.hidden = true; return; }
+    touch = e.pointerType === "touch" ? { x0: e.clientX, y0: e.clientY, axis: null } : null;
+    if (!touch) cv.setPointerCapture(e.pointerId);
+    if (nearLine(x, !!touch)) { lineDrag = true; hover = null; tip.hidden = true; return; }
     dragging = true; moved = false; downX = x; downBeat = beatNow();
     stage.classList.add("dragging");
   });
   const endDrag = e => {
-    if (gest && gest.axis === "y" && e.type === "pointerup" && performance.now() - gest.t < 80) startGlide(gest.v);
-    gest = null;
+    const wasTouch = touch;
+    touch = null;
+    if (wasTouch) { pointer = null; hover = null; tip.hidden = true; }
     if (lineDrag) { lineDrag = false; return; }
     if (!dragging) return;
     dragging = false;
     stage.classList.remove("dragging");
-    if (!moved && ctx) {
+    if (!moved && ctx && e.type === "pointerup" && !(wasTouch && wasTouch.axis === "y")) {
       const r = cv.getBoundingClientRect();
       const n = noteAt(e.clientX - r.left, e.clientY - r.top);
       if (n) { hover = n; hearNote(n, 0.8); }
@@ -1498,6 +1482,20 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   $("unlock").addEventListener("click", ensureAudio);
   $("play").addEventListener("click", () => playing ? pause() : play());
   $("restart").addEventListener("click", () => seek(startBeat - 0.25));
+  // Back n bars from the start of the bar we're in.
+  const backBars = n => { if (song) seek(song.bars[Math.max(0, barIdx(beatNow()) - n)].start); };
+  $("back1").addEventListener("click", () => backBars(1));
+  $("back5").addEventListener("click", () => backBars(5));
+  // The piano and the guitars are hidden until asked for; the choice is remembered on this device.
+  for (const [btn, el, key] of [["showPiano", "piano", "bv.piano"], ["showGuitar", "guitar", "bv.guitar"]]) {
+    const show = on => { $(el).hidden = !on; $(btn).setAttribute("aria-pressed", String(on)); };
+    try { show(localStorage.getItem(key) === "1"); } catch (e) { /* storage unavailable */ }
+    $(btn).addEventListener("click", () => {
+      const on = $(el).hidden;
+      show(on);
+      try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) { /* storage unavailable */ }
+    });
+  }
   $("hold").addEventListener("click", e => {
     holdMode = !holdMode;
     e.currentTarget.setAttribute("aria-pressed", String(holdMode));
