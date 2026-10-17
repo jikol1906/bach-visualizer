@@ -150,6 +150,8 @@ h1 em { color: var(--gilt); }
 .chordtag .name { color: var(--gilt); margin-right: 8px; }
 .singtag { top: 62px; pointer-events: auto; cursor: pointer; }
 .singtag span:not(:first-child) { margin-left: 8px; }
+.singtag.waiting { background: var(--gilt); color: var(--surface); }
+.singtag.waiting span, .singtag.waiting .name { color: var(--surface); }
 label.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .ctl { font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .ctl output { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--ink); font-variant-numeric: tabular-nums; display: inline-block; min-width: 4.5ch; }
@@ -218,7 +220,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <canvas id="cv" aria-label="Scrolling piano roll of every voice. Hover a note to hear it."></canvas>
     <div class="tip" id="tip" hidden></div>
     <div class="chordtag" id="rdChordBox" hidden><span>Chord</span><b class="name" id="rdChordName" hidden></b><b id="rdChord">–</b></div>
-    <div class="chordtag singtag" id="singTag" role="button" tabindex="0" title="Tap to hear the note again (H)" hidden><span>Sing</span><b class="name" id="singTarget">–</b><span>You</span><b id="singHeard">–</b><span id="singCount"></span></div>
+    <div class="chordtag singtag" id="singTag" role="button" tabindex="0" title="Tap to hear the note (H)" hidden><span id="singLabel">Next</span><b class="name" id="singTarget">–</b><span>You</span><b id="singHeard">–</b><span id="singCount"></span></div>
     <button class="unlock" id="unlock" type="button">Click once to turn on sound</button>
   </div>
 
@@ -252,11 +254,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       <label class="group ctl" for="arpRate" title="Arpeggio speed, in notes per second">Arp <input id="arpRate" type="range" min="2" max="16" step="0.5" value="6"><output id="arpOut">6/s</output></label>
     </div>
     <div class="group">
-      <button id="sing" type="button" aria-pressed="false" title="Sing the melody: the line waits on each note until your voice hits it. Needs a microphone, and headphones so it doesn't hear the speakers.">Sing</button>
+      <button id="sing" type="button" aria-pressed="false" title="Sing a voice while the others play: the music waits on any note you miss. Needs a microphone, and headphones so it doesn't hear the speakers.">Sing</button>
       <label class="group ctl" for="singVoice">Voice <select id="singVoice"></select></label>
-      <label class="group ctl" for="singGuide" title="Play each note once when the line arrives, in a middle octave"><input id="singGuide" type="checkbox" checked> Guide</label>
+      <label class="group ctl" for="singGuide" title="Play the voice you're singing softly along with you (headphones only, or the microphone hears it)"><input id="singGuide" type="checkbox"> Guide</label>
     </div>
-    <label class="group ctl" for="tempo">Speed<input id="tempo" type="range" min="25" max="200" step="5" value="100"><output id="tempoOut">100%</output></label>
+    <label class="group ctl" for="tempo">Speed <input id="tempo" type="range" min="25" max="200" step="5" value="100"><output id="tempoOut">100%</output></label>
     <label class="group ctl" for="zoom">Zoom <input id="zoom" type="range" min="50" max="340" value="150"></label>
     <label class="group ctl" for="vol">Volume <input id="vol" type="range" min="0" max="100" value="70"></label>
     <label class="group ctl" for="loop"><input id="loop" type="checkbox" checked> Loop</label>
@@ -287,7 +289,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       <h2>Playing it</h2>
       <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1 bar</em> and <em>−5 bars</em>), <kbd>Home</kbd> goes back to the start. <em>Piano</em> and <em>Guitar</em> show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
       <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
-      <p>To sing along, turn on <em>Sing</em>, pick a voice, and allow the microphone. The line stops on the first note of that voice, shows its name, and plays it once (<em>Guide</em>); it jumps to the next note as soon as you hold the right pitch for a moment, in any octave. The rest of the harmony keeps sounding under the line. Use headphones, or the microphone will hear the speakers. <kbd>H</kbd> or a tap on the tag plays the note again. A note repeated twice in a row needs a new breath between.</p>
+      <p>To sing along, pick a voice, turn on <em>Sing</em> and allow the microphone. The music starts a bar before that voice's next note and plays on without it, in time. Sing its notes, in any octave: your pitch is drawn as a line over the score, and every note you hit in time gets a gold bar underneath. Miss one and the music stops on it, holds the harmony and plays the note for you; it carries on as soon as you sing it (<kbd>Space</kbd> skips it). Notes too quick to sing at the current speed never stop the music, so slow down with <em>Speed</em> to be asked for more of them. <em>Guide</em> plays your voice softly along with you. Use headphones, or the microphone will hear the speakers. <kbd>H</kbd> or a tap on the tag plays the next note.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
     <div>
@@ -753,7 +755,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   // ---------- Hold chord: while paused, sustain everything under the line ----------
   let holdMode = false;
-  let singOn = false, singTr = null;   // sing-along: the voice being sung is left out of the held chord
+  let singOn = false, singTr = null;   // sing-along: the voice being sung is left out of the backing and the held chord
+  let singWait = null;   // the note the music is stopped on, waiting to hear it sung
   const heldVoices = new Map();   // note -> held voice
   let chord = new Set(), lastChordSize = 0;
   const fading = new Set();   // released held voices that are still fading out
@@ -830,31 +833,38 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     else arpTick();
   }
 
-  // ---------- Sing along: the line waits on each note of one voice until the microphone hears it ----------
-  // The target is the next note of the sung voice at or after the line, so dragging the line moves it. Matching
-  // is by pitch class, so any octave counts (the flute sits above most voices). The sung voice is left out of the
-  // held chord, so what you hear is the harmony around the line you're singing.
-  const SING_MIN_DUR = 0.2;   // beats: shorter notes (ornaments) aren't asked of the singer
-  const SING_TOL = 0.55;      // semitones either side of the target
-  const SING_HOLD = 0.18;     // seconds the note must be held
-  const SING_FRESH = 0.4;     // semitones away from the last note, for a repeated note to count as a new one
-  let micStream = null, micSrc = null, analyser = null, singBuf = null, singTimer = null, singBusy = false;
-  let singGate = 0, singStable = 0, singPrev = null, singGap = true, singLast = null, singSince = 0, singGuided = true, singTickAt = 0;
-  const yinBuf = new Float32Array(1100);
+  // ---------- Sing along: the music plays in time, and waits on any note of one voice the microphone doesn't hear ----------
+  // Like a piano tutor's wait mode. The sung voice drops out of the backing (or plays softly, with Guide). As the line
+  // reaches each of its notes you should already be on it, or get there within a moment; if not, the backing stops
+  // and holds its chord, a reference tone plays, and the music carries on once you sing the note. Matching is by
+  // pitch class, so any octave counts (the flute sits above most voices). Notes too quick to sing at the current
+  // speed are left to you: sing them or not, nothing waits on them.
+  const SING_MIN_SEC = 0.2;   // notes shorter than this (at the current speed) aren't waited on
+  const SING_TOL = 0.55;      // semitones either side of the note
+  const SING_EARLY = 0.3;     // seconds before a note starts that singing it already counts
+  const SING_GRACE = 0.3;     // seconds after a note starts before the music stops to wait (at most 60% of the note)
+  const SING_CATCH = 0.05;    // seconds the pitch must be steady to count, in time...
+  const SING_HOLD = 0.15;     // ...and while the music waits
+  let micStream = null, micSrc = null, analyser = null, singBuf = null, yinBuf = null, singTimer = null, singBusy = false;
+  let singIdx = 0, singOkFor = 0, singTickAt = 0, singLastB = 0, singGate = 0, singWaitAt = 0, singGuided = false;
+  let singRaw = [], singHeard = null, singFolded = null, singLastSung = 62, singScore = { ok: 0, waited: 0 };
+  const singTrail = [];   // { b, m, gap }: the sung pitch, drawn over the roll and folded to the octave of the notes
   const setText = (id, s) => { const el = $(id); if (el.textContent !== s) el.textContent = s; };
   const wrap12 = x => (((x + 6) % 12) + 12) % 12 - 6;   // distance to the nearest octave of a note, in semitones
-  const singNotes = tr => tr.singNotes ||= tr.notes.filter(n => n.dur >= SING_MIN_DUR);
-  const singTarget = () => {
-    if (!singTr) return null;
-    const ns = singNotes(singTr);
-    return ns[firstAtOrAfter(ns, viewBeat - 0.03)] || null;
-  };
+  const singNs = () => singTr ? singTr.notes : [];
+  const singSync = b => firstAtOrAfter(singNs(), b - 0.01);
+  const singAfter = i => { const ns = singNs(); let j = i; while (j < ns.length && ns[j].start - ns[i].start < 1e-3) j++; return j; };
+  const singGroup = i => singNs().slice(i, singAfter(i));   // notes of the voice that start together: any of them will do
+  const realSec = n => (secAt(n.start + n.dur) - secAt(n.start)) / speed;
+  const singNeeded = i => singGroup(i).some(n => realSec(n) >= SING_MIN_SEC);
+  const singOk = i => singHeard != null && singGroup(i).some(n => Math.abs(wrap12(singHeard - n.midi)) < SING_TOL);
+  const singPending = () => singOn && singNs()[singIdx] || null;
 
   // Pitch of a voice by the YIN method: 0 when it's too quiet or not clearly pitched.
   function detectPitch(x, sr) {
     let sum = 0;
     for (let i = 0; i < x.length; i++) sum += x[i] * x[i];
-    if (Math.sqrt(sum / x.length) < 0.01) return 0;
+    if (Math.sqrt(sum / x.length) < 0.006) return 0;
     const W = x.length >> 1, tauMax = Math.min(W, Math.floor(sr / 70)), tauMin = Math.floor(sr / 1100), d = yinBuf;
     for (let t = 1; t <= tauMax; t++) {
       let s = 0;
@@ -881,6 +891,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     analyser = ctx.createAnalyser(); analyser.fftSize = 2048;
     micSrc.connect(analyser);   // not to the speakers
     singBuf = new Float32Array(analyser.fftSize);
+    yinBuf = new Float32Array(analyser.fftSize);
   }
   function stopMic() {
     if (micSrc) micSrc.disconnect();
@@ -888,23 +899,26 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     micStream = micSrc = analyser = null;
   }
 
-  // One reference note for the target, folded into a middle octave that most voices can reach.
-  function singGuide(t) {
-    if (!ctx) return;
-    voice(57 + (((t.midi - 57) % 12) + 12) % 12, ctx.currentTime + 0.02, 0.55, 0.8, t.tr.kind, t.tr);
-    singGate = ctx.currentTime + 0.9;   // the microphone ignores the guide note (and its reverb)
+  // A reference tone for a note, in the octave nearest to where you've been singing (or a middle one).
+  function singGuide(n) {
+    if (!ctx || !n) return;
+    voice(Math.round(singLastSung + wrap12(n.midi - singLastSung)), ctx.currentTime + 0.02, 0.6, 0.8, n.tr.kind, n.tr);
+    singGate = ctx.currentTime + 0.8;   // the microphone ignores the tone (and its reverb)
   }
 
   function showSing() {
-    const t = singTarget(), ns = singTr ? singNotes(singTr) : [];
-    setText("singTarget", t ? NAMES[t.midi % 12] : "🎉 done");
-    setText("singCount", `${t ? ns.indexOf(t) : ns.length}/${ns.length}`);
+    const t = singPending();
+    setText("singLabel", singWait ? "Sing" : "Next");
+    setText("singTarget", t ? NAMES[t.midi % 12] : singOn ? "🎉 end" : "–");
+    setText("singCount", singOn ? `✓ ${singScore.ok} · waited ${singScore.waited}` : "");
+    $("singTag").classList.toggle("waiting", !!singWait);
   }
 
-  function singAdvance(t) {
-    const ns = singNotes(singTr), i = ns.indexOf(t);
-    singPrev = t.midi; singGap = false; singStable = 0;
-    seek(i + 1 < ns.length ? ns[i + 1].start : endBeat);
+  // Stop on the note and hold the harmony under it until it's sung.
+  function singFreeze(t) {
+    pause();
+    viewBeat = t.start;
+    singWait = t; singWaitAt = performance.now() / 1000; singGuided = false; singOkFor = 0;
     showSing();
   }
 
@@ -912,22 +926,61 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (!singOn || !analyser) return;
     const now = performance.now() / 1000, dt = Math.min(0.1, now - singTickAt);
     singTickAt = now;
-    const t = singTarget();
-    if (t !== singLast) { singLast = t; singSince = now; singGuided = false; singStable = 0; showSing(); }
-    if (t && !singGuided && now - singSince > 0.12) { singGuided = true; if ($("singGuide").checked) singGuide(t); }   // waits out a drag
+
+    // What you're singing: the median of the last three readings, which drops one-off octave slips.
     analyser.getFloatTimeDomainData(singBuf);
-    const f = detectPitch(singBuf, ctx.sampleRate);
-    if (!f) { singStable = 0; singGap = true; setText("singHeard", "–"); return; }
-    const m = 69 + 12 * Math.log2(f / 440), diff = t ? wrap12(m - t.midi) : 0, ok = !!t && Math.abs(diff) < SING_TOL;
-    const fresh = singGap || singPrev == null || Math.abs(wrap12(m - singPrev)) > SING_FRESH;
-    let heard = NAMES[((Math.round(m) % 12) + 12) % 12];
-    if (ok) heard += fresh ? " ✓" : " (again)";   // the same note twice in a row needs a new breath
-    else if (t && Math.abs(diff) < 2) heard += diff < 0 ? " ↑ higher" : " ↓ lower";
+    const f = ctx.currentTime < singGate ? 0 : detectPitch(singBuf, ctx.sampleRate);
+    if (f) { singRaw.push(69 + 12 * Math.log2(f / 440)); if (singRaw.length > 3) singRaw.shift(); }
+    else singRaw.length = 0;
+    singHeard = singRaw.length ? [...singRaw].sort((a, b) => a - b)[singRaw.length >> 1] : null;
+    if (singHeard != null) singLastSung = singHeard;
+
+    const b = beatNow(), ns = singNs();
+    if (!playing && !singWait) singIdx = singSync(b);
+    else if (playing && (b < singLastB - 0.05 || b > singLastB + 2)) singIdx = singSync(b);   // looped or jumped
+    singLastB = b;
+
+    if (singWait) {
+      if (!singGuided && now - singWaitAt > 0.5) { singGuided = true; singGuide(singWait); }
+      singOkFor = singOk(singIdx) ? singOkFor + dt : 0;
+      if (singOkFor >= SING_HOLD) { singWait.sung = 2; singScore.waited++; play(); }   // play() moves past the note
+    } else if (playing) {
+      for (;;) {
+        const t = ns[singIdx];
+        if (!t) break;
+        const until = (secAt(t.start) - secAt(b)) / speed;   // real seconds to the note (negative once it's begun)
+        if (!singNeeded(singIdx)) { if (until > 0) break; singIdx = singAfter(singIdx); singOkFor = 0; continue; }
+        if (until > SING_EARLY) break;
+        if (singOk(singIdx)) {
+          singOkFor += dt;
+          if (singOkFor >= SING_CATCH) { for (const n of singGroup(singIdx)) n.sung = 1; singScore.ok++; singIdx = singAfter(singIdx); singOkFor = 0; }
+        } else {
+          singOkFor = 0;
+          if (-until > Math.min(SING_GRACE, realSec(t) * 0.6)) singFreeze(t);
+        }
+        break;
+      }
+    }
+
+    // The trail, folded into the octave of the note you're on.
+    const t = singPending();
+    if (singHeard != null) {
+      const ref = t ? t.midi : singFolded != null ? singFolded : singHeard;
+      singFolded = ref + wrap12(singHeard - ref);
+    } else singFolded = null;
+    while (singTrail.length && singTrail[0].b < b - 64) singTrail.shift();
+    while (singTrail.length && singTrail[singTrail.length - 1].b > b + 0.01) singTrail.pop();   // after a jump back
+    if (playing) singTrail.push({ b, m: singFolded, gap: singFolded == null });
+
+    let heard = "–";
+    if (singHeard != null) {
+      const diff = t ? wrap12(singHeard - t.midi) : 0;
+      heard = NAMES[((Math.round(singHeard) % 12) + 12) % 12];
+      if (t && Math.abs(diff) < SING_TOL) heard += " ✓";
+      else if (t && Math.abs(diff) < 2) heard += diff < 0 ? " ↑" : " ↓";   // sing higher / lower
+    }
     setText("singHeard", heard);
-    if (!ok || ctx.currentTime < singGate) { singStable = 0; if (!ok) singGap = true; return; }
-    if (!fresh) return;
-    singStable += dt;
-    if (singStable >= SING_HOLD) singAdvance(t);
+    showSing();
   }
 
   function singError(msg) {
@@ -936,14 +989,27 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     setTimeout(() => { if (!singOn) $("singTag").hidden = true; }, 4000);
   }
 
+  // Start over on the chosen voice: one bar before its next note, so there's a run-up.
+  function singStart() {
+    singTr = song.tracks[Number($("singVoice").value)] || song.tracks[0];
+    for (const tr of song.tracks) for (const n of tr.notes) delete n.sung;
+    singScore = { ok: 0, waited: 0 }; singTrail.length = 0; singWait = null; singOkFor = 0;
+    const i = singSync(beatNow()), t = singNs()[i] || singNs()[0];
+    if (t) seek(Math.max(startBeat - 0.25, t.start - song.bars[barIdx(t.start)].len));
+    singIdx = singSync(beatNow()); singLastB = beatNow();
+    if (!playing) play();
+    showSing();
+  }
+
   async function setSing(on) {
     if (on === singOn || singBusy) return;
     if (!on) {
-      singOn = false; singTr = null;
+      singOn = false; singTr = null; singWait = null; singTrail.length = 0;
       clearInterval(singTimer);
       stopMic();
       $("sing").setAttribute("aria-pressed", "false");
       $("singTag").hidden = true;
+      if (playing) { const b = beatNow(); stopAll(); anchor(b); }   // bring the sung voice back in
       return;
     }
     if (!song || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !ensureAudio()) { singError("no microphone support"); return; }
@@ -951,17 +1017,14 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     try { await startMic(); }
     catch (e) { singBusy = false; singError("microphone blocked"); return; }
     singBusy = false;
-    setHold(true);
+    if (holdMode) setHold(false);
     singOn = true;
-    singTr = song.tracks[Number($("singVoice").value)] || song.tracks[0];
-    singPrev = null; singGap = true; singStable = 0; singLast = undefined; singTickAt = performance.now() / 1000;
+    singTickAt = performance.now() / 1000;
     $("sing").setAttribute("aria-pressed", "true");
     $("singTag").hidden = false;
     setText("singHeard", "–");
-    const t = singTarget();
-    if (t) seek(t.start);
-    showSing();
-    singTimer = setInterval(singTick, 30);
+    singStart();
+    singTimer = setInterval(singTick, 25);
   }
 
   function fillSingVoices() {
@@ -970,7 +1033,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     song.tracks.forEach((tr, i) => sel.add(new Option(tr.name, i)));
     const same = song.tracks.findIndex(tr => tr.name === keep);
     sel.value = same >= 0 ? same : 0;
-    if (singOn) { singTr = song.tracks[Number(sel.value)]; showSing(); }
+    if (singOn) singStart();
   }
 
 
@@ -980,14 +1043,14 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   }
 
   function updateChord() {
-    chord = holdMode && !playing ? chordAt(viewBeat) : new Set();
+    chord = (holdMode || singWait) && !playing ? chordAt(viewBeat) : new Set();
     const audible = ctx && ctx.state === "running", now = ctx ? ctx.currentTime : 0;
     for (const [n, v] of heldVoices) {
       // A note that drops out keeps sounding for a moment before it fades. A finger resting near a note's
       // start wobbles it in and out of the chord, and restarting it each time meant a fresh attack over the
       // old one's fade, again and again: audible, and enough work to make a phone's audio crackle.
       if (chord.has(n) && audible) { v.gone = 0; continue; }
-      if (audible && holdMode && !playing && (v.gone ||= now) > now - 0.1) continue;
+      if (audible && (holdMode || singWait) && !playing && (v.gone ||= now) > now - 0.1) continue;
       // Fast drags pile up fading voices; past a dozen, fade the newcomers quickly to spare a phone's CPU.
       for (const f of fading) if (f.until <= now) fading.delete(f);
       v.release(undefined, fading.size > 12 ? 0.04 : undefined);
@@ -1047,7 +1110,9 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const horizon = beatAtSec(anchorSec + (ctx.currentTime + 0.2 - anchorCtx) * speed);
     while (schedIdx < notes.length && notes[schedIdx].start < horizon) {
       const n = notes[schedIdx++], s0 = secAt(n.start);
-      voice(n.midi, anchorCtx + (s0 - anchorSec) / speed, (secAt(n.start + n.dur) - s0) / speed, n.vel, n.tr.kind, n.tr);
+      // While singing, your voice drops out of the backing, or with Guide plays softly under you.
+      const vel = singOn && n.tr === singTr ? ($("singGuide").checked ? n.vel * 0.3 : 0) : n.vel;
+      if (vel) voice(n.midi, anchorCtx + (s0 - anchorSec) / speed, (secAt(n.start + n.dur) - s0) / speed, vel, n.tr.kind, n.tr);
     }
     if (beatNow() >= endBeat + 0.25) {
       if ($("loop").checked) { stopAll(); anchor(startBeat - 0.25); }
@@ -1069,10 +1134,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function play() {
     if (!notes.length || !ensureAudio()) return;
-    setSing(false);
     if (viewBeat >= endBeat) viewBeat = startBeat - 0.25;
     anchor(viewBeat);
     playing = true;
+    if (singOn) { singIdx = singWait ? singAfter(singIdx) : singSync(viewBeat); singLastB = viewBeat; singOkFor = 0; }   // playing on while waiting skips the note
+    singWait = null;
     keepAwake();
     timer = setInterval(schedule, 25);
     schedule();
@@ -1091,7 +1157,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function seek(b) {
     b = Math.min(endBeat + 0.5, Math.max(startBeat - 1, b));
-    if (playing) { stopAll(); anchor(b); } else viewBeat = b;
+    if (playing) { stopAll(); anchor(b); } else { viewBeat = b; singWait = null; }
   }
 
   function setSpeed(pct) {
@@ -1253,8 +1319,9 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     requestAnimationFrame(draw);
     if (!W || !song) return;
     updateChord();
-    const holding = holdMode && !playing;
-    const st = singOn && holding ? singTarget() : null;   // the note to sing
+    const holding = (holdMode || singWait) && !playing;
+    const st = singPending();   // the next note to sing (and any that start with it)
+    const isSt = n => st && n.tr === st.tr && Math.abs(n.start - st.start) < 1e-3;
     const now = beatNow();
     const c = g2, lh = laneH(), px = playX();
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1324,7 +1391,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       for (let i = firstAtOrAfter(tr.notes, b0 - 8); i < tr.notes.length && tr.notes[i].start < b1; i++) {
         const n = tr.notes[i], x = xOf(n.start, now), w = Math.max(n.dur * pxPerBeat - 3, 3), y = yOf(n.midi) + 1;
         if (x + w < GUTTER) continue;
-        const active = holding ? chord.has(n) || n === st : now >= n.start && now < n.start + n.dur;
+        const active = holding ? chord.has(n) || (singWait && isSt(n)) : now >= n.start && now < n.start + n.dur;
         const past = !active && now >= n.start + n.dur;
         if (active) { if (t === leadIdx) lead = n; if (!top || n.midi > top.midi) top = n; }
         if (active) { c.shadowColor = col; c.shadowBlur = 16; }
@@ -1332,11 +1399,14 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
         c.globalAlpha = (past ? 0.3 : active ? 1 : 0.82) * fade;
         c.beginPath(); c.roundRect(x, y, w, h, r); c.fill();
         c.shadowBlur = 0; c.globalAlpha = 1;
-        if (n === st) { c.strokeStyle = colors["gilt-hi"]; c.lineWidth = 3; c.stroke(); }
+        if (isSt(n)) { c.strokeStyle = colors["gilt-hi"]; c.lineWidth = 3; c.stroke(); }
         else if (n === hover || (arpMidi === n.midi && chord.has(n))) { c.strokeStyle = colors.ink; c.lineWidth = 2; c.stroke(); }
         if (w > 30 && h >= 13) { c.fillStyle = colors.surface; c.fillText(noteName(n.midi), x + w / 2, y + h / 2 + 0.5); }
+        // Sung notes get a bar underneath: gilt when sung in time, faint when the music had to wait.
+        if (n.sung && singOn) { c.fillStyle = n.sung === 1 ? colors["gilt-hi"] : colors.muted; c.fillRect(x, y + h + 0.5, w, 2); }
       }
     }
+    if (singOn) drawSingTrail(c, now, lh, px);
     c.restore();
 
     // Playhead
@@ -1381,6 +1451,24 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
     // Keep hover in sync while notes slide under a still pointer (visual only; sound fires on pointer moves).
     if (pointer && !dragging) updateHover(pointer.x, pointer.y, false);
+  }
+
+  // The pitch you're singing: a trail behind the line, and a dot on it, folded into the octave of the notes.
+  function drawSingTrail(c, now, lh, px) {
+    c.beginPath();
+    let pen = false;
+    for (const p of singTrail) {
+      if (p.gap) { pen = false; continue; }
+      const x = xOf(p.b, now), y = yOf(p.m) + lh / 2;
+      if (pen) c.lineTo(x, y); else { c.moveTo(x, y); pen = true; }
+    }
+    c.strokeStyle = colors.ink; c.globalAlpha = 0.7; c.lineWidth = 2.5; c.lineJoin = c.lineCap = "round";
+    c.stroke(); c.globalAlpha = 1;
+    if (singFolded == null) return;
+    const st = singPending(), ok = st && Math.abs(wrap12(singHeard - st.midi)) < SING_TOL;
+    c.beginPath(); c.arc(px, yOf(singFolded) + lh / 2, Math.max(4, Math.min(lh * 0.6, 8)), 0, Math.PI * 2);
+    c.fillStyle = ok ? colors["gilt-hi"] : colors.ink; c.fill();
+    c.strokeStyle = colors.surface; c.lineWidth = 2; c.stroke();
   }
 
   function noteAt(x, y) {
@@ -1699,7 +1787,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       seek(song.bars[now - song.bars[i].start > 0.25 || i === 0 ? i : i - 1].start);
     }
     else if (e.code === "KeyA" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (holdMode) setArp(!arpOn); }
-    else if (e.code === "KeyH" && singOn && !e.metaKey && !e.ctrlKey) { e.preventDefault(); const t = singTarget(); if (t) singGuide(t); }
+    else if (e.code === "KeyH" && singOn && !e.metaKey && !e.ctrlKey) { e.preventDefault(); singGuide(singPending()); }
     else if (e.code === "Home") { e.preventDefault(); seek(startBeat - 0.25); }
   });
 
@@ -1725,19 +1813,13 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     $("hold").setAttribute("aria-pressed", String(on));
     stage.classList.toggle("holding", on);
     $("arp").disabled = !on;
-    if (!on) { setArp(false); setSing(false); }
-    if (on) { ensureAudio(); pause(); }
+    if (!on) setArp(false);
+    if (on) { ensureAudio(); pause(); setSing(false); singWait = null; }
   }
   $("hold").addEventListener("click", () => setHold(!holdMode));
   $("sing").addEventListener("click", () => setSing(!singOn));
-  $("singVoice").addEventListener("change", e => {
-    if (!singOn) return;
-    singTr = song.tracks[Number(e.target.value)];
-    const t = singTarget();
-    if (t) seek(t.start);
-    showSing();
-  });
-  $("singTag").addEventListener("click", () => { const t = singTarget(); if (t) singGuide(t); });
+  $("singVoice").addEventListener("change", () => { if (singOn) singStart(); });
+  $("singTag").addEventListener("click", () => singGuide(singPending()));
   $("arp").addEventListener("click", () => setArp(!arpOn));
   $("arpRate").addEventListener("input", e => { $("arpOut").textContent = e.target.value + "/s"; });
   $("rev").addEventListener("input", e => {
