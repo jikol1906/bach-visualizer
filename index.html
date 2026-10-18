@@ -847,7 +847,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   const SING_HOLD = 0.15;     // ...and while the music waits
   let micStream = null, micSrc = null, analyser = null, singBuf = null, yinBuf = null, singTimer = null, singBusy = false;
   let singIdx = 0, singOkFor = 0, singTickAt = 0, singLastB = 0, singGate = 0, singWaitAt = 0, singGuided = false;
-  let singRaw = [], singHeard = null, singFolded = null, singLastSung = 62, singScore = { ok: 0, waited: 0 };
+  let singRaw = [], singMiss = 0, singHeard = null, singFolded = null, singLastSung = 62, singScore = { ok: 0, waited: 0 };
   const singTrail = [];   // { b, m, gap }: the sung pitch, drawn over the roll and folded to the octave of the notes
   const setText = (id, s) => { const el = $(id); if (el.textContent !== s) el.textContent = s; };
   const wrap12 = x => (((x + 6) % 12) + 12) % 12 - 6;   // distance to the nearest octave of a note, in semitones
@@ -864,7 +864,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   function detectPitch(x, sr) {
     let sum = 0;
     for (let i = 0; i < x.length; i++) sum += x[i] * x[i];
-    if (Math.sqrt(sum / x.length) < 0.006) return 0;
+    if (Math.sqrt(sum / x.length) < 0.003) return 0;
     const W = x.length >> 1, tauMax = Math.min(W, Math.floor(sr / 70)), tauMin = Math.floor(sr / 1100), d = yinBuf;
     for (let t = 1; t <= tauMax; t++) {
       let s = 0;
@@ -873,20 +873,30 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
     let run = 0;
     for (let t = 1; t <= tauMax; t++) { run += d[t]; d[t] = d[t] * t / run; }
+    // The first dip under the threshold; failing that, the deepest dip if it's still clearly pitched (a breathy or
+    // quiet voice rarely reaches 0.15).
     let t = tauMin;
     for (; t < tauMax; t++) {
       if (d[t] < 0.15) { while (t + 1 < tauMax && d[t + 1] < d[t]) t++; break; }
     }
-    if (t >= tauMax) return 0;
+    if (t >= tauMax) {
+      let best = tauMin;
+      for (let k = tauMin; k < tauMax; k++) if (d[k] < d[best]) best = k;
+      if (d[best] > 0.3) return 0;
+      t = best;
+    }
     const a = d[t - 1], b = d[t], c = d[t + 1], den = a - 2 * b + c;
     return sr / (t + (den ? (a - c) / (2 * den) : 0));
   }
 
   async function startMic() {
     if (micStream) return;
-    // Echo cancellation helps a little if the backing leaks from the speakers; noise suppression and auto gain
-    // would only smear a singing voice.
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+    // All the browser's voice processing off. Echo cancellation in particular takes a held note for echo and fades
+    // it out within a second or so (until you stop and start again), and noise suppression and auto gain smear it.
+    // That's why this needs headphones.
+    const raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+    try { micStream = await navigator.mediaDevices.getUserMedia({ audio: { ...raw, voiceIsolation: false, channelCount: 1 } }); }
+    catch (e) { if (e.name !== "OverconstrainedError") throw e; micStream = await navigator.mediaDevices.getUserMedia({ audio: raw }); }
     micSrc = ctx.createMediaStreamSource(micStream);
     analyser = ctx.createAnalyser(); analyser.fftSize = 2048;
     micSrc.connect(analyser);   // not to the speakers
@@ -930,8 +940,9 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     // What you're singing: the median of the last three readings, which drops one-off octave slips.
     analyser.getFloatTimeDomainData(singBuf);
     const f = ctx.currentTime < singGate ? 0 : detectPitch(singBuf, ctx.sampleRate);
-    if (f) { singRaw.push(69 + 12 * Math.log2(f / 440)); if (singRaw.length > 3) singRaw.shift(); }
-    else singRaw.length = 0;
+    // A reading that drops out for a moment (a consonant, a wobble) keeps the last pitch for up to 150 ms.
+    if (f) { singRaw.push(69 + 12 * Math.log2(f / 440)); if (singRaw.length > 3) singRaw.shift(); singMiss = 0; }
+    else if ((singMiss += dt) > 0.15 || ctx.currentTime < singGate) singRaw.length = 0;
     singHeard = singRaw.length ? [...singRaw].sort((a, b) => a - b)[singRaw.length >> 1] : null;
     if (singHeard != null) singLastSung = singHeard;
 
