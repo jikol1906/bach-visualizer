@@ -846,6 +846,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   const SING_CATCH = 0.05;    // seconds the pitch must be steady to count, in time...
   const SING_HOLD = 0.15;     // ...and while the music waits
   let micStream = null, micSrc = null, analyser = null, singBuf = null, yinBuf = null, singTimer = null, singBusy = false;
+  // Your voice reaches the pitch reading later than the music reaches you: the microphone's own latency, plus about
+  // 45 ms of analysis window and smoothing. On top of what the browser reports, singLag learns any delay it doesn't
+  // (Bluetooth often isn't reported) from how late your in-time notes start, so the timing settles in after a few notes.
+  const SING_ANALYSIS = 0.045;
+  let singInLat = 0.02, singLag = 0, singFrom = null;
   let singIdx = 0, singOkFor = 0, singTickAt = 0, singLastB = 0, singGate = 0, singWaitAt = 0, singGuided = false;
   let singRaw = [], singMiss = 0, singHeard = null, singFolded = null, singLastSung = 62, singScore = { ok: 0, waited: 0 };
   const singTrail = [];   // { b, m, gap }: the sung pitch, drawn over the roll and folded to the octave of the notes
@@ -901,6 +906,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     analyser = ctx.createAnalyser(); analyser.fftSize = 2048;
     micSrc.connect(analyser);   // not to the speakers
     singBuf = new Float32Array(analyser.fftSize);
+    const lat = micStream.getAudioTracks()[0].getSettings().latency;
+    singInLat = lat > 0 && lat < 0.5 ? lat : 0.02;
     yinBuf = new Float32Array(analyser.fftSize);
   }
   function stopMic() {
@@ -946,10 +953,12 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     singHeard = singRaw.length ? [...singRaw].sort((a, b) => a - b)[singRaw.length >> 1] : null;
     if (singHeard != null) singLastSung = singHeard;
 
-    const b = beatNow(), ns = singNs();
+    const b = beatHeard(singInLat + SING_ANALYSIS + singLag), ns = singNs();   // the beat you were hearing as you sang this
+    // Jumps are spotted on the audio clock, which only jumps when the music does; the judged beat trails it.
+    const rb = beatNow();
     if (!playing && !singWait) singIdx = singSync(b);
-    else if (playing && (b < singLastB - 0.05 || b > singLastB + 2)) singIdx = singSync(b);   // looped or jumped
-    singLastB = b;
+    else if (playing && (rb < singLastB - 0.5 || rb > singLastB + 2)) singIdx = singSync(b);   // looped or jumped
+    singLastB = rb;
 
     if (singWait) {
       if (!singGuided && now - singWaitAt > 0.5) { singGuided = true; singGuide(singWait); }
@@ -963,8 +972,16 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
         if (!singNeeded(singIdx)) { if (until > 0) break; singIdx = singAfter(singIdx); singOkFor = 0; continue; }
         if (until > SING_EARLY) break;
         if (singOk(singIdx)) {
+          if (!singOkFor) singFrom = until;
           singOkFor += dt;
-          if (singOkFor >= SING_CATCH) { for (const n of singGroup(singIdx)) n.sung = 1; singScore.ok++; singIdx = singAfter(singIdx); singOkFor = 0; }
+          if (singOkFor >= SING_CATCH) {
+            // Learn the delay from how late the note began. Not from one already held when its window opened
+            // (a repeated pitch), which says nothing about timing.
+            if (singFrom < SING_EARLY - 0.04) singLag = Math.min(0.35, Math.max(0, singLag + 0.3 * Math.min(0.25, Math.max(-0.1, -singFrom))));
+            for (const n of singGroup(singIdx)) n.sung = 1;
+            singScore.ok++; singIdx = singAfter(singIdx); singOkFor = 0;
+            $("singTag").title = `Tap to hear the note (H). Timing allows ${Math.round((outLat() + singInLat + SING_ANALYSIS + singLag) * 1000)} ms for sound to reach you and come back.`;
+          }
         } else {
           singOkFor = 0;
           if (-until > Math.min(SING_GRACE, realSec(t) * 0.6)) singFreeze(t);
@@ -1108,6 +1125,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     return s.beat + (t - s.sec) * s.bpm / 60;
   };
   const beatNow = () => playing ? beatAtSec(anchorSec + (ctx.currentTime - anchorCtx) * speed) : viewBeat;
+  // What's reaching your ears: the audio clock runs ahead of the speakers by the output latency, which is a few
+  // milliseconds wired and often 150-300 ms over Bluetooth. The line follows this, so it's in time with what you hear.
+  const outLat = () => ctx ? (ctx.outputLatency || 0) + (ctx.baseLatency || 0) : 0;
+  const beatHeard = (late = 0) => playing ? beatAtSec(anchorSec + (ctx.currentTime - outLat() - late - anchorCtx) * speed) : viewBeat;
   const bpmAt = b => segAtBeat(b).bpm * speed;
   const firstAtOrAfter = (list, b) => { let l = 0, r = list.length; while (l < r) { const m = (l + r) >> 1; if (list[m].start < b - 1e-9) l = m + 1; else r = m; } return l; };
 
@@ -1158,7 +1179,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function pause() {
     if (!playing) return;
-    viewBeat = beatNow();
+    viewBeat = beatHeard();   // resume from what you last heard
     playing = false;
     clearInterval(timer);
     stopAll();
@@ -1333,7 +1354,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const holding = (holdMode || singWait) && !playing;
     const st = singPending();   // the next note to sing (and any that start with it)
     const isSt = n => st && n.tr === st.tr && Math.abs(n.start - st.start) < 1e-3;
-    const now = beatNow();
+    const now = beatHeard();
     const c = g2, lh = laneH(), px = playX();
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     c.clearRect(0, 0, W, H);
@@ -1484,7 +1505,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function noteAt(x, y) {
     if (x < GUTTER || y < TOP) return null;
-    const b = beatNow() + (x - playX()) / pxPerBeat;
+    const b = beatHeard() + (x - playX()) / pxPerBeat;
     const m = hi - Math.floor((y - TOP) / laneH());
     // Top voice wins where notes overlap, matching the drawing order.
     for (const tr of song.tracks) {
