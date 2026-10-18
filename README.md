@@ -2,7 +2,7 @@
 
 A scrolling piano roll for J. S. Bach's Orchestral Suite No. 2 in B minor, BWV 1067: all seven movements, from the Ouverture to the *Badinerie*. Watch the notes go by, hover any note to hear it, and drag or scroll to move through the piece.
 
-It's a static site: `index.html` plus the MIDI files in `midi/`. Serve it with any static host (GitHub Pages works), or locally with `python3 -m http.server`. Opening `index.html` straight from disk (`file://`) won't load the movements, because browsers block `fetch` there.
+It's a static site: `index.html` plus the MIDI files in `midi/`, with no build step. Serve it with any static host (GitHub Pages works), or locally with `npm run serve` or `python3 -m http.server`. Opening `index.html` straight from disk (`file://`) won't load the movements, because browsers block `fetch` there.
 
 ## The notes
 
@@ -28,3 +28,16 @@ MIDI files rarely mark an upbeat. If the first note isn't on a barline, the app 
 - `Space`: play/pause · `←` `→`: jump a bar · `Home`: back to the start
 - The **overview strip** under the lane shows the whole movement; click or drag on it to jump. Gold flags mark big tempo or metre changes (like the Ouverture's fast fugue). **Go to bar** jumps to a bar number
 - Speed, zoom, volume, loop, **reverb** amount and **space** (Room, Hall, Church) are in the control rail
+
+## Tests
+
+`package.json` holds development tools only; the site itself doesn't need Node.
+
+```sh
+npm install
+npx playwright install chromium   # once
+npm test                          # everything
+npm run test:e2e                  # browser tests only (Playwright)
+```
+
+The browser tests in `tests/e2e/` drive the app the way a person would and check only what's on the page (readouts, buttons, pixels), so they keep passing however the code underneath is organised. Sing mode is tested with Chromium's fake microphone, fed with tones the tests generate (`tests/e2e/wav.js`). Tonal is served from `node_modules` during tests, so chord names don't depend on the network. GitHub Actions runs everything on every pull request.
