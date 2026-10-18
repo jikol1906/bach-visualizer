@@ -1,0 +1,1413 @@
+import { NAMES, BLACK, noteName, wrap12, lenName } from "./notes.js";
+import { parseMidi } from "./midi.js";
+import { MOVEMENTS } from "./movements.js";
+import * as Time from "./time.js";
+import { firstAtOrAfter } from "./time.js";
+import * as Chords from "./chords.js";
+import { chordName } from "./chords.js";
+import { detectPitch } from "./pitch.js";
+import { FRETS, tuning, placeNotes } from "./fingering.js";
+
+// ---------- The suite: John Hamm's 1995 GM sequences, in midi/ ----------
+const midiCache = new Map();
+const midiBuffer = mv => {
+  if (!midiCache.has(mv.slug)) midiCache.set(mv.slug, fetch(`midi/${mv.slug}.mid`).then(r => {
+    if (!r.ok) throw new Error(`Couldn't load ${mv.slug}.mid (${r.status})`);
+    return r.arrayBuffer();
+  }).catch(err => { midiCache.delete(mv.slug); throw err; }));
+  return midiCache.get(mv.slug);
+};
+// Pieces default to the suite. A piece from elsewhere sets its own byline, credit line and source note.
+const SUITE = {
+  byline: "J. S. Bach · Orchestral Suite No. 2 in B minor, BWV 1067",
+  credit: mv => `${mv.title}, flute and strings (John Hamm, 1995)`,
+  source: document.getElementById("aboutSrc").textContent,
+};
+
+const $ = id => document.getElementById(id);
+
+// ---------- Song state ----------
+let song = null;        // { name, tracks, tempoMap, bars, sig, bpm }
+let notes = [];         // notes of the voices that are switched on, in start order
+let lo = 60, hi = 84, startBeat = 0, endBeat = 1, leadIdx = 0;
+
+const isFlute = tr => /flute|flöte|flauto|traverso/i.test(tr.name) || (tr.program >= 72 && tr.program <= 79);
+const isWind = tr => isFlute(tr) || /oboe|recorder|clarinet|bassoon/i.test(tr.name) || (tr.program >= 64 && tr.program <= 79);
+
+function rebuild() {
+  notes = song.tracks.filter(tr => tr.on).flatMap(tr => tr.notes).sort((x, y) => x.start - y.start || y.midi - x.midi);
+  miniDirty = true;
+}
+
+function renderChips() {
+  const box = $("voices");
+  box.innerHTML = '<span class="label">Voices</span>';
+  song.tracks.forEach(tr => {
+    const wrap = document.createElement("span");
+    wrap.className = "chipwrap";
+    wrap.style.setProperty("--c", `var(--v${tr.color})`);
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "chip";
+    b.setAttribute("aria-pressed", String(tr.on));
+    b.innerHTML = '<span class="dot"></span>';
+    b.append(tr.name);
+    b.addEventListener("click", () => {
+      if (tr.on && song.tracks.filter(x => x.on).length === 1) return;   // keep at least one voice
+      tr.on = !tr.on;
+      b.setAttribute("aria-pressed", String(tr.on));
+      if (!tr.on && spot.has(tr)) setSpotlight(tr, false);
+      const at = beatNow();
+      rebuild();
+      if (playing) { stopAll(); anchor(at); }
+    });
+    const sp = document.createElement("button");
+    sp.type = "button"; sp.className = "spot"; sp.dataset.track = tr.name;
+    sp.setAttribute("aria-pressed", "false");
+    sp.setAttribute("aria-label", `Spotlight ${tr.name}`);
+    sp.title = `Spotlight ${tr.name}: the other voices step back`;
+    sp.textContent = "◎";
+    sp.addEventListener("click", () => {
+      if (!tr.on) { tr.on = true; b.setAttribute("aria-pressed", "true"); rebuild(); if (playing) { const at = beatNow(); stopAll(); anchor(at); } }
+      setSpotlight(tr, !spot.has(tr));
+    });
+    wrap.append(b, sp);
+    box.append(wrap);
+  });
+}
+
+// Spotlight: any number of voices keep their full level and drawing; the others step back (quieter, faded).
+const spot = new Set();
+const SPOT_DIM = 0.3;
+const focusGain = tr => !spot.size || spot.has(tr) ? 1 : SPOT_DIM;
+function setSpotlight(tr, on) {
+  if (tr) { if (on) spot.add(tr); else spot.delete(tr); } else spot.clear();
+  for (const t of song.tracks) for (const bus of [t.bus, t.hbus]) if (bus) bus.gain.setTargetAtTime(focusGain(t), ctx.currentTime, 0.05);
+  for (const el of document.querySelectorAll("#voices .spot")) el.setAttribute("aria-pressed", String(song.tracks.some(t => spot.has(t) && t.name === el.dataset.track)));
+  $("clearSpot").hidden = !spot.size;
+  leadIdx = spot.size ? Math.min(...[...spot].map(t => song.tracks.indexOf(t))) : 0;
+  $("rdLeadName").textContent = song.tracks[leadIdx].name;
+  miniDirty = true;
+}
+// Each voice reaches the mix through its own gain, one for played notes and one for held chords.
+function busFor(tr, held) {
+  const k = held ? "hbus" : "bus";
+  if (!tr[k]) { tr[k] = ctx.createGain(); tr[k].gain.value = focusGain(tr); tr[k].connect(held ? heldBus : master); }
+  return tr[k];
+}
+
+$("clearSpot").addEventListener("click", () => setSpotlight(null));
+
+function loadSong(s, label) {
+  stopAll();
+  releaseHeld();
+  song = s; song.name = label || s.name;
+  // Order voices high to low, the way a score lists them, and give the flute the gilt colour.
+  const avg = tr => tr.notes.reduce((a, n) => a + n.midi, 0) / tr.notes.length;
+  s.tracks.sort((a, b) => (isFlute(b) - isFlute(a)) || avg(b) - avg(a));
+  let c = isFlute(s.tracks[0]) ? 1 : 0;
+  s.tracks.forEach((tr, i) => {
+    tr.on = true;
+    tr.color = i === 0 && isFlute(tr) ? 0 : (c++ % 6);
+    tr.kind = isWind(tr) ? "wind" : "string";
+    let overlaps = 0;
+    for (let j = 1; j < tr.notes.length; j++) if (tr.notes[j].start < tr.notes[j - 1].start + tr.notes[j - 1].dur - 0.05) overlaps++;
+    tr.mono = overlaps < tr.notes.length * 0.05;
+    for (const n of tr.notes) n.tr = tr;
+  });
+  leadIdx = 0; spot.clear(); $("clearSpot").hidden = true;
+  const all = s.tracks.flatMap(tr => tr.notes);
+  lo = Math.min(...all.map(n => n.midi)) - 1;
+  hi = Math.max(...all.map(n => n.midi)) + 1;
+  startBeat = Math.min(...all.map(n => n.start));
+  endBeat = Math.max(...all.map(n => n.start + n.dur));
+  rebuild();
+  renderChips();
+  fillSingVoices();
+  $("rdLeadName").textContent = song.tracks[0].name;
+  seek(startBeat - 0.25);
+  $("srcName").textContent = song.name;
+  $("srcErr").textContent = "";
+}
+
+// ---------- Audio: a breathy flute and a bowed string voice ----------
+let ctx = null, master = null, heldBus = null, duck = null, noiseBuf = null, rev = null, wet = null;
+const revAmount = () => Number($("rev").value) / 100;
+
+// The space: a generated stereo impulse of decaying noise, darker as it fades. Bigger rooms
+// ring longer and have a longer gap before the reflections arrive.
+function makeIR(seconds) {
+  const sr = ctx.sampleRate, len = Math.round(sr * seconds), pre = sr * (0.006 + seconds * 0.006);
+  // A longer tail carries more energy; scale it so a bigger space sounds bigger, not just louder.
+  const level = (2.4 / seconds) ** 0.4;
+  const ir = ctx.createBuffer(2, len, sr);
+  for (let c = 0; c < 2; c++) {
+    const data = ir.getChannelData(c);
+    let lp = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / len, k = 0.55 - 0.45 * t;   // one-pole low-pass that closes over the tail
+      lp += k * ((Math.random() * 2 - 1) - lp);
+      data[i] = i < pre ? 0 : lp * (1 - t) ** 3.2 * level;
+    }
+  }
+  return ir;
+}
+const voices = new Set();
+const vol = () => (Number($("vol").value) / 100) ** 1.5;
+
+function ensureAudio() {
+  if (ctx && ctx.state === "closed") resetAudio();
+  if (!ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = vol();
+    // A gentle compressor, then a fast brick-wall limiter so big chords never clip.
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -16; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.2;
+    const lim = ctx.createDynamicsCompressor();
+    lim.threshold.value = -4; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.1;
+    master.connect(comp).connect(lim).connect(ctx.destination);
+    // Held chords get their own bus, turned down as the chord grows (doubled notes add up fast).
+    heldBus = ctx.createGain();
+    duck = ctx.createGain();   // silences the held chord while the arpeggio plays it instead
+    heldBus.connect(duck).connect(master);
+    noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const ch = noiseBuf.getChannelData(0);
+    for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+
+    rev = ctx.createConvolver(); wet = ctx.createGain();
+    rev.buffer = makeIR(Number($("room").value));
+    wet.gain.value = revAmount();
+    master.connect(rev).connect(wet).connect(comp);
+  }
+  // Not just "suspended": iOS leaves the context "interrupted" after you switch apps, and its clock stays
+  // frozen until resumed, so nothing would play. Some iOS versions never finish that resume, so if the
+  // context is still interrupted a moment later, throw it away and build a fresh one.
+  if (ctx.state !== "running") {
+    const stuck = ctx;
+    stuck.resume().catch(() => {});
+    setTimeout(() => {
+      if (ctx !== stuck || stuck.state !== "interrupted") return;
+      const was = playing;
+      if (was) pause();
+      resetAudio();
+      ensureAudio();
+      if (was) play(); else updateChord();
+      // Made outside a tap, the new context may start suspended; then it needs one more tap to sound.
+      if (ctx.state !== "running") $("unlock").hidden = false;
+    }, 500);
+  }
+  ctx.onstatechange = () => { if (ctx && ctx.state !== "running" && playing) pause(); };   // e.g. app switched on iOS
+  $("unlock").hidden = true;
+  return true;
+}
+
+// Drop the audio graph so ensureAudio() builds a new one; the old context's nodes are unusable in a new one.
+function resetAudio() {
+  if (!ctx) return;
+  if (ctx.state !== "closed") stopAll();
+  voices.clear(); heldVoices.clear(); fading.clear();
+  ctx.onstatechange = null;
+  try { ctx.close().catch(() => {}); } catch (e) { /* already closed */ }
+  ctx = null;
+  if (song) for (const t of song.tracks) t.bus = t.hbus = null;
+  ducked = false; lastChordSize = 0;
+}
+
+// dur = Infinity makes a held voice: it sustains until release() is called on what this returns.
+function voice(midi, when, dur, vel = 0.8, kind = "wind", tr = null, dest = null) {
+  if (!ctx) return null;
+  const f = 440 * 2 ** ((midi - 69) / 12);
+  const wind = kind === "wind", held = dur === Infinity;
+  const d = Math.max(dur * 0.92, 0.06), atk = wind ? 0.025 : held ? 0.12 : 0.05, rel = wind ? 0.08 : 0.16;
+  const peak = (wind ? 0.2 : 0.07) * vel;
+  // Every node made for this note is listed, so all of them can be disconnected once it has ended.
+  // A stopped node that is still connected to a live bus is never freed: without this, each note left
+  // ~20 dead nodes behind, and after a few minutes the audio thread glitched and the page lagged.
+  const all = [], mk = node => (all.push(node), node);
+  const g = mk(ctx.createGain());
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(peak, when + atk);
+  if (held) g.gain.linearRampToValueAtTime(peak * 0.8, when + atk + 0.15);
+  else {
+    g.gain.linearRampToValueAtTime(peak * 0.8, when + Math.max(atk + 0.01, d));
+    g.gain.linearRampToValueAtTime(0, when + d + rel);
+  }
+  // Held voices fade out through their own gain, which only ever ramps from 1 to 0. That avoids cancelling
+  // the envelope mid-ramp, which some browsers (Safari) answer with a jump in level, heard as a click.
+  const rg = held ? mk(ctx.createGain()) : null;
+  const out = dest || (tr ? busFor(tr, held) : held ? heldBus : master);
+  if (held) g.connect(rg).connect(out); else g.connect(out);
+
+  // Vibrato that only blooms on longer notes.
+  const lfo = mk(ctx.createOscillator()), lfoG = mk(ctx.createGain());
+  lfo.frequency.value = wind ? 5.3 : 5.6;
+  lfoG.gain.setValueAtTime(0, when);
+  lfoG.gain.linearRampToValueAtTime(wind ? 14 : 9, when + 0.35);
+  lfo.connect(lfoG);
+  const nodes = [lfo];
+
+  if (wind) {
+    for (const [mult, amp] of [[1, 1], [2, 0.22], [3, 0.07]]) {
+      const o = mk(ctx.createOscillator()), og = mk(ctx.createGain());
+      o.type = "sine"; o.frequency.value = f * mult; og.gain.value = amp;
+      lfoG.connect(o.detune);
+      o.connect(og).connect(g);
+      nodes.push(o);
+    }
+    // A puff of breath at the start of each note.
+    const n = mk(ctx.createBufferSource()), bp = mk(ctx.createBiquadFilter()), ng = mk(ctx.createGain());
+    n.buffer = noiseBuf; bp.type = "bandpass"; bp.frequency.value = Math.min(f * 2, 9000); bp.Q.value = 1.2;
+    ng.gain.setValueAtTime(0, when);
+    ng.gain.linearRampToValueAtTime(0.05 * vel, when + 0.012);
+    ng.gain.linearRampToValueAtTime(0, when + 0.09);
+    n.connect(bp).connect(ng).connect(master);
+    nodes.push(n);
+  } else {
+    // A bowed section: four detuned saws that each drift a little on their own, a filter that opens on
+    // the bow's bite and then settles, two body resonances, and a thread of bow noise.
+    const low = midi < 57;   // viola and cello bodies resonate lower than a violin's
+    const hp = mk(ctx.createBiquadFilter()), lp = mk(ctx.createBiquadFilter()), b1 = mk(ctx.createBiquadFilter()), b2 = mk(ctx.createBiquadFilter());
+    hp.type = "highpass"; hp.frequency.value = f * 0.7; hp.Q.value = 0.5;
+    lp.type = "lowpass"; lp.Q.value = 0.6;
+    lp.frequency.setValueAtTime(Math.min(f * 9, 11000), when);
+    lp.frequency.setTargetAtTime(Math.min(f * 4.5, 7000), when + 0.03, 0.12);
+    b1.type = "peaking"; b1.frequency.value = low ? 230 : 290; b1.Q.value = 1.4; b1.gain.value = 5;
+    b2.type = "peaking"; b2.frequency.value = low ? 1500 : 2900; b2.Q.value = 1.8; b2.gain.value = 6;
+    hp.connect(lp).connect(b1).connect(b2).connect(g);
+    [-11, -4, 3, 10].forEach((det, k) => {
+      const o = mk(ctx.createOscillator()), og = mk(ctx.createGain());
+      o.type = "sawtooth"; o.frequency.value = f; o.detune.value = det; og.gain.value = 0.26;
+      lfoG.connect(o.detune);
+      const drift = mk(ctx.createOscillator()), dg = mk(ctx.createGain());
+      drift.frequency.value = 0.17 + 0.13 * k; dg.gain.value = 3.5;
+      drift.connect(dg).connect(o.detune);
+      o.connect(og).connect(hp);
+      nodes.push(o, drift);
+    });
+    const n = mk(ctx.createBufferSource()), bp = mk(ctx.createBiquadFilter()), ng = mk(ctx.createGain());
+    n.buffer = noiseBuf; n.loop = true;
+    bp.type = "bandpass"; bp.frequency.value = Math.min(f * 3, 9000); bp.Q.value = 0.9;
+    ng.gain.setValueAtTime(0, when);
+    ng.gain.linearRampToValueAtTime(0.03 * vel, when + 0.03);
+    ng.gain.setTargetAtTime(0.009 * vel, when + 0.05, 0.1);
+    n.connect(bp).connect(ng).connect(g);
+    nodes.push(n);
+  }
+
+  const v = { nodes, g };
+  const cleanup = () => {
+    if (v.done) return;
+    v.done = true;
+    for (const node of all) try { node.disconnect(); } catch (e) { /* already disconnected */ }
+    voices.delete(v); fading.delete(v);
+  };
+  // onended is the main trigger; a timer backs it up for browsers that don't fire it reliably.
+  const cleanupAt = t => { nodes[1].onended = cleanup; setTimeout(cleanup, Math.max(0, t - ctx.currentTime) * 1000 + 300); };
+  if (held) {
+    // The breath noise is a one-second buffer, so let it play out once; the tones run until release.
+    for (const node of nodes) node.start(when);
+    if (wind) nodes[nodes.length - 1].stop(when + 0.2);
+    v.release = (at = ctx.currentTime, fade = wind ? 0.15 : 0.22) => {
+      rg.gain.setValueAtTime(1, at);
+      rg.gain.linearRampToValueAtTime(0, at + fade);
+      for (const node of nodes) try { node.stop(at + fade + 0.02); } catch (e) { /* already stopped */ }
+      v.until = at + fade;
+      cleanupAt(at + fade + 0.02);
+    };
+    return v;
+  }
+  const stopAt = when + d + rel + 0.05;
+  for (const node of nodes) { node.start(when); node.stop(stopAt); }
+  cleanupAt(stopAt);
+  voices.add(v);
+  return v;
+}
+
+// ---------- Hold chord: while paused, sustain everything under the line ----------
+let holdMode = false;
+let singOn = false, singTr = null;   // sing-along: the voice being sung is left out of the backing and the held chord
+let singWait = null;   // the note the music is stopped on, waiting to hear it sung
+const heldVoices = new Map();   // note -> held voice
+let chord = new Set(), lastChordSize = 0;
+const fading = new Set();   // released held voices that are still fading out
+
+
+// The notes the held chord sustains; the voice being sung is left out of it.
+const chordAt = b => Chords.chordAt(song.tracks, b, singOn ? singTr : null);
+
+// Arpeggio toggle: while on, cycle through the held chord up and back down (turning without repeating
+// the top or bottom note), one pitch per step, each in its own voice's sound. It follows the chord as
+// the line moves, and the sustained chord goes silent meanwhile.
+// Timed on the audio clock: a short look-ahead (60 ms) keeps notes even at high speeds while still
+// picking up a new chord almost at once when the line moves.
+const arpStep = () => 1 / Number($("arpRate").value);   // seconds per note
+let arpOn = false, arpK = 0, arpMidi = null, arpTimer = null, ducked = false, arpNext = 0;
+const arpShown = [];   // { t, midi } scheduled notes, for the outline in draw()
+function arpList() {
+  const byPitch = new Map();
+  for (const n of [...chord].sort((a, b) => a.midi - b.midi || (a.tr.kind === "wind") - (b.tr.kind === "wind"))) if (!byPitch.has(n.midi)) byPitch.set(n.midi, n);
+  return [...byPitch.values()];
+}
+function arpTick() {
+  const live = arpOn && holdMode && !playing && chord.size && ctx && ctx.state === "running";
+  if (live !== ducked && ctx) { duck.gain.setTargetAtTime(live ? 0 : 1, ctx.currentTime, 0.05); ducked = live; }
+  if (!live) { arpMidi = null; arpShown.length = 0; arpNext = 0; return; }
+  const now = ctx.currentTime, step = arpStep();
+  if (arpNext < now) arpNext = now + 0.01;
+  while (arpNext < now + 0.06) {
+    const list = arpList();
+    const seq = list.length < 2 ? list : list.concat(list.slice(1, -1).reverse());   // up, then down
+    const n = seq[arpK++ % seq.length];
+    voice(n.midi, arpNext, Math.min(0.45, step * 2.5), 0.85, n.tr.kind, n.tr);   // shorter notes when fast, to spare the CPU
+    arpShown.push({ t: arpNext, midi: n.midi });
+    arpNext += step;
+  }
+  while (arpShown.length > 1 && arpShown[1].t <= now) arpShown.shift();
+  arpMidi = arpShown.length && arpShown[0].t <= now ? arpShown[0].midi : arpMidi;
+}
+function setArp(on) {
+  arpOn = on;
+  $("arp").setAttribute("aria-pressed", String(on));
+  clearInterval(arpTimer);
+  arpK = 0; arpNext = 0; arpShown.length = 0;
+  if (on) { ensureAudio(); arpTimer = setInterval(arpTick, 20); arpTick(); }
+  else arpTick();
+}
+
+// ---------- Sing along: the music plays in time, and waits on any note of one voice the microphone doesn't hear ----------
+// Like a piano tutor's wait mode. The sung voice drops out of the backing (or plays softly, with Guide). As the line
+// reaches each of its notes you should already be on it, or get there within a moment; if not, the backing stops
+// and holds its chord, a reference tone plays, and the music carries on once you sing the note. Matching is by
+// pitch class, so any octave counts (the flute sits above most voices). Notes too quick to sing at the current
+// speed are left to you: sing them or not, nothing waits on them.
+const SING_MIN_SEC = 0.2;   // notes shorter than this (at the current speed) aren't waited on
+const SING_TOL = 0.55;      // semitones either side of the note
+const SING_EARLY = 0.3;     // seconds before a note starts that singing it already counts
+const SING_GRACE = 0.3;     // seconds after a note starts before the music stops to wait (at most 60% of the note)
+const SING_CATCH = 0.05;    // seconds the pitch must be steady to count, in time...
+const SING_HOLD = 0.15;     // ...and while the music waits
+let micStream = null, micSrc = null, analyser = null, singBuf = null, yinBuf = null, singTimer = null, singBusy = false;
+// Your voice reaches the pitch reading later than the music reaches you: the microphone's own latency, plus about
+// 45 ms of analysis window and smoothing. On top of what the browser reports, singLag learns any delay it doesn't
+// (Bluetooth often isn't reported) from how late your in-time notes start, so the timing settles in after a few notes.
+const SING_ANALYSIS = 0.045;
+let singInLat = 0.02, singLag = 0, singFrom = null;
+let singIdx = 0, singOkFor = 0, singTickAt = 0, singLastB = 0, singGate = 0, singWaitAt = 0, singGuided = false;
+let singRaw = [], singMiss = 0, singHeard = null, singFolded = null, singLastSung = 62, singScore = { ok: 0, waited: 0 };
+const singTrail = [];   // { b, m, gap }: the sung pitch, drawn over the roll and folded to the octave of the notes
+const setText = (id, s) => { const el = $(id); if (el.textContent !== s) el.textContent = s; };
+const singNs = () => singTr ? singTr.notes : [];
+const singSync = b => firstAtOrAfter(singNs(), b - 0.01);
+const singAfter = i => { const ns = singNs(); let j = i; while (j < ns.length && ns[j].start - ns[i].start < 1e-3) j++; return j; };
+const singGroup = i => singNs().slice(i, singAfter(i));   // notes of the voice that start together: any of them will do
+const realSec = n => (secAt(n.start + n.dur) - secAt(n.start)) / speed;
+const singNeeded = i => singGroup(i).some(n => realSec(n) >= SING_MIN_SEC);
+const singOk = i => singHeard != null && singGroup(i).some(n => Math.abs(wrap12(singHeard - n.midi)) < SING_TOL);
+const singPending = () => singOn && singNs()[singIdx] || null;
+
+
+async function startMic() {
+  if (micStream) return;
+  // All the browser's voice processing off. Echo cancellation in particular takes a held note for echo and fades
+  // it out within a second or so (until you stop and start again), and noise suppression and auto gain smear it.
+  // That's why this needs headphones.
+  const raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+  try { micStream = await navigator.mediaDevices.getUserMedia({ audio: { ...raw, voiceIsolation: false, channelCount: 1 } }); }
+  catch (e) { if (e.name !== "OverconstrainedError") throw e; micStream = await navigator.mediaDevices.getUserMedia({ audio: raw }); }
+  micSrc = ctx.createMediaStreamSource(micStream);
+  analyser = ctx.createAnalyser(); analyser.fftSize = 2048;
+  micSrc.connect(analyser);   // not to the speakers
+  singBuf = new Float32Array(analyser.fftSize);
+  const lat = micStream.getAudioTracks()[0].getSettings().latency;
+  singInLat = lat > 0 && lat < 0.5 ? lat : 0.02;
+  yinBuf = new Float32Array(analyser.fftSize);
+}
+function stopMic() {
+  if (micSrc) micSrc.disconnect();
+  if (micStream) for (const t of micStream.getTracks()) t.stop();
+  micStream = micSrc = analyser = null;
+}
+
+// A reference tone for a note, in the octave nearest to where you've been singing (or a middle one).
+function singGuide(n) {
+  if (!ctx || !n) return;
+  voice(Math.round(singLastSung + wrap12(n.midi - singLastSung)), ctx.currentTime + 0.02, 0.6, 0.8, n.tr.kind, n.tr);
+  singGate = ctx.currentTime + 0.8;   // the microphone ignores the tone (and its reverb)
+}
+
+function showSing() {
+  const t = singPending();
+  setText("singLabel", singWait ? "Sing" : "Next");
+  setText("singTarget", t ? NAMES[t.midi % 12] : singOn ? "🎉 end" : "–");
+  setText("singCount", singOn ? `✓ ${singScore.ok} · waited ${singScore.waited}` : "");
+  $("singTag").classList.toggle("waiting", !!singWait);
+}
+
+// Stop on the note and hold the harmony under it until it's sung.
+function singFreeze(t) {
+  pause();
+  viewBeat = t.start;
+  singWait = t; singWaitAt = performance.now() / 1000; singGuided = false; singOkFor = 0;
+  showSing();
+}
+
+function singTick() {
+  if (!singOn || !analyser) return;
+  const now = performance.now() / 1000, dt = Math.min(0.1, now - singTickAt);
+  singTickAt = now;
+
+  // What you're singing: the median of the last three readings, which drops one-off octave slips.
+  analyser.getFloatTimeDomainData(singBuf);
+  const f = ctx.currentTime < singGate ? 0 : detectPitch(singBuf, ctx.sampleRate, yinBuf);
+  // A reading that drops out for a moment (a consonant, a wobble) keeps the last pitch for up to 150 ms.
+  if (f) { singRaw.push(69 + 12 * Math.log2(f / 440)); if (singRaw.length > 3) singRaw.shift(); singMiss = 0; }
+  else if ((singMiss += dt) > 0.15 || ctx.currentTime < singGate) singRaw.length = 0;
+  singHeard = singRaw.length ? [...singRaw].sort((a, b) => a - b)[singRaw.length >> 1] : null;
+  if (singHeard != null) singLastSung = singHeard;
+
+  const b = beatHeard(singInLat + SING_ANALYSIS + singLag), ns = singNs();   // the beat you were hearing as you sang this
+  // Jumps are spotted on the audio clock, which only jumps when the music does; the judged beat trails it.
+  const rb = beatNow();
+  if (!playing && !singWait) singIdx = singSync(b);
+  else if (playing && (rb < singLastB - 0.5 || rb > singLastB + 2)) singIdx = singSync(b);   // looped or jumped
+  singLastB = rb;
+
+  if (singWait) {
+    if (!singGuided && now - singWaitAt > 0.5) { singGuided = true; singGuide(singWait); }
+    singOkFor = singOk(singIdx) ? singOkFor + dt : 0;
+    if (singOkFor >= SING_HOLD) { singWait.sung = 2; singScore.waited++; play(); }   // play() moves past the note
+  } else if (playing) {
+    for (;;) {
+      const t = ns[singIdx];
+      if (!t) break;
+      const until = (secAt(t.start) - secAt(b)) / speed;   // real seconds to the note (negative once it's begun)
+      if (!singNeeded(singIdx)) { if (until > 0) break; singIdx = singAfter(singIdx); singOkFor = 0; continue; }
+      if (until > SING_EARLY) break;
+      if (singOk(singIdx)) {
+        if (!singOkFor) singFrom = until;
+        singOkFor += dt;
+        if (singOkFor >= SING_CATCH) {
+          // Learn the delay from how late the note began. Not from one already held when its window opened
+          // (a repeated pitch), which says nothing about timing.
+          if (singFrom < SING_EARLY - 0.04) singLag = Math.min(0.35, Math.max(0, singLag + 0.3 * Math.min(0.25, Math.max(-0.1, -singFrom))));
+          for (const n of singGroup(singIdx)) n.sung = 1;
+          singScore.ok++; singIdx = singAfter(singIdx); singOkFor = 0;
+          $("singTag").title = `Tap to hear the note (H). Timing allows ${Math.round((outLat() + singInLat + SING_ANALYSIS + singLag) * 1000)} ms for sound to reach you and come back.`;
+        }
+      } else {
+        singOkFor = 0;
+        if (-until > Math.min(SING_GRACE, realSec(t) * 0.6)) singFreeze(t);
+      }
+      break;
+    }
+  }
+
+  // The trail, folded into the octave of the note you're on.
+  const t = singPending();
+  if (singHeard != null) {
+    const ref = t ? t.midi : singFolded != null ? singFolded : singHeard;
+    singFolded = ref + wrap12(singHeard - ref);
+  } else singFolded = null;
+  while (singTrail.length && singTrail[0].b < b - 64) singTrail.shift();
+  while (singTrail.length && singTrail[singTrail.length - 1].b > b + 0.01) singTrail.pop();   // after a jump back
+  if (playing) singTrail.push({ b, m: singFolded, gap: singFolded == null });
+
+  let heard = "–";
+  if (singHeard != null) {
+    const diff = t ? wrap12(singHeard - t.midi) : 0;
+    heard = NAMES[((Math.round(singHeard) % 12) + 12) % 12];
+    if (t && Math.abs(diff) < SING_TOL) heard += " ✓";
+    else if (t && Math.abs(diff) < 2) heard += diff < 0 ? " ↑" : " ↓";   // sing higher / lower
+  }
+  setText("singHeard", heard);
+  showSing();
+}
+
+function singError(msg) {
+  $("singTag").hidden = false;
+  setText("singTarget", "–"); setText("singHeard", msg); setText("singCount", "");
+  setTimeout(() => { if (!singOn) $("singTag").hidden = true; }, 4000);
+}
+
+// Start over on the chosen voice: one bar before its next note, so there's a run-up.
+function singStart() {
+  singTr = song.tracks[Number($("singVoice").value)] || song.tracks[0];
+  for (const tr of song.tracks) for (const n of tr.notes) delete n.sung;
+  singScore = { ok: 0, waited: 0 }; singTrail.length = 0; singWait = null; singOkFor = 0;
+  const i = singSync(beatNow()), t = singNs()[i] || singNs()[0];
+  if (t) seek(Math.max(startBeat - 0.25, t.start - song.bars[barIdx(t.start)].len));
+  singIdx = singSync(beatNow()); singLastB = beatNow();
+  if (!playing) play();
+  showSing();
+}
+
+async function setSing(on) {
+  if (on === singOn || singBusy) return;
+  if (!on) {
+    singOn = false; singTr = null; singWait = null; singTrail.length = 0;
+    clearInterval(singTimer);
+    stopMic();
+    $("sing").setAttribute("aria-pressed", "false");
+    $("singTag").hidden = true;
+    if (playing) { const b = beatNow(); stopAll(); anchor(b); }   // bring the sung voice back in
+    return;
+  }
+  if (!song || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !ensureAudio()) { singError("no microphone support"); return; }
+  singBusy = true;
+  try { await startMic(); }
+  catch (e) { singBusy = false; singError("microphone blocked"); return; }
+  singBusy = false;
+  if (holdMode) setHold(false);
+  singOn = true;
+  singTickAt = performance.now() / 1000;
+  $("sing").setAttribute("aria-pressed", "true");
+  $("singTag").hidden = false;
+  setText("singHeard", "–");
+  singStart();
+  singTimer = setInterval(singTick, 25);
+}
+
+function fillSingVoices() {
+  const sel = $("singVoice"), keep = sel.selectedOptions[0] && sel.selectedOptions[0].textContent;
+  sel.innerHTML = "";
+  song.tracks.forEach((tr, i) => sel.add(new Option(tr.name, i)));
+  const same = song.tracks.findIndex(tr => tr.name === keep);
+  sel.value = same >= 0 ? same : 0;
+  if (singOn) singStart();
+}
+
+
+function releaseHeld() {
+  for (const v of heldVoices.values()) v.release();
+  heldVoices.clear();
+}
+
+function updateChord() {
+  chord = (holdMode || singWait) && !playing ? chordAt(viewBeat) : new Set();
+  const audible = ctx && ctx.state === "running", now = ctx ? ctx.currentTime : 0;
+  for (const [n, v] of heldVoices) {
+    // A note that drops out keeps sounding for a moment before it fades. A finger resting near a note's
+    // start wobbles it in and out of the chord, and restarting it each time meant a fresh attack over the
+    // old one's fade, again and again: audible, and enough work to make a phone's audio crackle.
+    if (chord.has(n) && audible) { v.gone = 0; continue; }
+    if (audible && (holdMode || singWait) && !playing && (v.gone ||= now) > now - 0.1) continue;
+    // Fast drags pile up fading voices; past a dozen, fade the newcomers quickly to spare a phone's CPU.
+    for (const f of fading) if (f.until <= now) fading.delete(f);
+    v.release(undefined, fading.size > 12 ? 0.04 : undefined);
+    fading.add(v);
+    heldVoices.delete(n);
+  }
+  if (audible) {
+    let added = false;
+    for (const n of chord) if (!heldVoices.has(n)) { heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), n.tr.kind, n.tr)); added = true; }
+    if (added || heldVoices.size !== lastChordSize) {
+      // Roughly equal loudness whatever the chord size: full level up to 3 notes, then 1/sqrt(n).
+      heldBus.gain.setTargetAtTime(Math.min(1, Math.sqrt(3 / Math.max(heldVoices.size, 1))), ctx.currentTime, 0.03);
+      lastChordSize = heldVoices.size;
+    }
+  }
+  const midis = [...chord].map(n => n.midi).sort((a, b) => a - b);
+  const label = midis.length ? midis.map(noteName).join(" ") : "–", name = chordName(midis);
+  if ($("rdChord").textContent !== label) $("rdChord").textContent = label;
+  if ($("rdChordName").textContent !== name) { $("rdChordName").textContent = name; $("rdChordName").hidden = !name; }
+  $("rdChordBox").hidden = !holdMode;
+}
+
+function stopAll() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  for (const v of voices) {
+    v.g.gain.cancelScheduledValues(now);
+    v.g.gain.setTargetAtTime(0, now, 0.015);
+    for (const node of v.nodes) try { node.stop(now + 0.08); } catch (e) { /* already stopped */ }
+  }
+  voices.clear();
+}
+
+// ---------- Transport ----------
+// Time follows the file's tempo map (ritardandos, the Overture's fast section), scaled by the speed control.
+let speed = 1, viewBeat = 0, playing = false, anchorCtx = 0, anchorSec = 0, schedIdx = 0, timer = null;
+
+const segAtBeat = b => Time.segAtBeat(song.tempoMap, b);
+const secAt = b => Time.secAt(song.tempoMap, b);   // score seconds at 100%
+const beatAtSec = t => Time.beatAtSec(song.tempoMap, t);
+const beatNow = () => playing ? beatAtSec(anchorSec + (ctx.currentTime - anchorCtx) * speed) : viewBeat;
+// What's reaching your ears: the audio clock runs ahead of the speakers by the output latency, which is a few
+// milliseconds wired and often 150-300 ms over Bluetooth. The line follows this, so it's in time with what you hear.
+const outLat = () => ctx ? (ctx.outputLatency || 0) + (ctx.baseLatency || 0) : 0;
+const beatHeard = (late = 0) => playing ? beatAtSec(anchorSec + (ctx.currentTime - outLat() - late - anchorCtx) * speed) : viewBeat;
+const bpmAt = b => segAtBeat(b).bpm * speed;
+
+function anchor(b) {
+  anchorCtx = ctx.currentTime + 0.04;
+  anchorSec = secAt(b);
+  schedIdx = firstAtOrAfter(notes, b);
+}
+
+function schedule() {
+  const horizon = beatAtSec(anchorSec + (ctx.currentTime + 0.2 - anchorCtx) * speed);
+  while (schedIdx < notes.length && notes[schedIdx].start < horizon) {
+    const n = notes[schedIdx++], s0 = secAt(n.start);
+    // While singing, your voice drops out of the backing, or with Guide plays softly under you.
+    const vel = singOn && n.tr === singTr ? ($("singGuide").checked ? n.vel * 0.3 : 0) : n.vel;
+    if (vel) voice(n.midi, anchorCtx + (s0 - anchorSec) / speed, (secAt(n.start + n.dur) - s0) / speed, vel, n.tr.kind, n.tr);
+  }
+  if (beatNow() >= endBeat + 0.25) {
+    if ($("loop").checked) { stopAll(); anchor(startBeat - 0.25); }
+    else { pause(); viewBeat = endBeat; }
+  }
+}
+
+// Keep the screen on while playing. The browser drops the lock whenever the tab is hidden, so re-request on return.
+let wakeLock = null;
+async function keepAwake() {
+  if (wakeLock || !navigator.wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch (e) { /* denied or unsupported: playback still works */ }
+}
+function letSleep() { if (wakeLock) wakeLock.release().catch(() => {}); wakeLock = null; }
+document.addEventListener("visibilitychange", () => { if (playing && document.visibilityState === "visible") keepAwake(); });
+
+function play() {
+  if (!notes.length || !ensureAudio()) return;
+  if (viewBeat >= endBeat) viewBeat = startBeat - 0.25;
+  anchor(viewBeat);
+  playing = true;
+  if (singOn) { singIdx = singWait ? singAfter(singIdx) : singSync(viewBeat); singLastB = viewBeat; singOkFor = 0; }   // playing on while waiting skips the note
+  singWait = null;
+  keepAwake();
+  timer = setInterval(schedule, 25);
+  schedule();
+  $("play").textContent = "Pause";
+}
+
+function pause() {
+  if (!playing) return;
+  viewBeat = beatHeard();   // resume from what you last heard
+  playing = false;
+  clearInterval(timer);
+  stopAll();
+  letSleep();
+  $("play").textContent = "Play";
+}
+
+function seek(b) {
+  b = Math.min(endBeat + 0.5, Math.max(startBeat - 1, b));
+  if (playing) { stopAll(); anchor(b); } else { viewBeat = b; singWait = null; }
+}
+
+function setSpeed(pct) {
+  const b = playing ? beatNow() : 0;
+  speed = pct / 100;
+  if (playing) anchor(b);
+  $("tempoOut").textContent = pct + "%";
+}
+
+// ---------- Drawing ----------
+const cv = $("cv"), g2 = cv.getContext("2d"), stage = $("stage"), tip = $("tip");
+let W = 0, H = 0, dpr = 1;
+const GUTTER = 52, TOP = 26, BOTTOM = 10;
+let pxPerBeat = 150, hover = null, pointer = null, colors = {};
+let headFrac = 0.25;   // where the line sits across the lane; it can be dragged while paused
+
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ["surface", "ink", "muted", "line", "lane", "lane-alt", "gilt-hi", "key-white", "key-black", "v0", "v1", "v2", "v3", "v4", "v5"]) colors[k] = cs.getPropertyValue("--" + k).trim();
+  colors.ver = (colors.ver || 0) + 1;   // lets cached drawings know the theme changed
+}
+readColors();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readColors);
+new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+function resize() {
+  const r = cv.getBoundingClientRect();
+  dpr = window.devicePixelRatio || 1;
+  W = r.width; H = r.height;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+}
+new ResizeObserver(resize).observe(cv);
+
+const playX = () => GUTTER + (W - GUTTER) * headFrac;
+const laneH = () => (H - TOP - BOTTOM) / (hi - lo + 1);
+const yOf = m => TOP + (hi - m) * laneH();
+const xOf = (b, now) => playX() + (b - now) * pxPerBeat;
+
+// ---------- Overview strip: the whole movement in miniature; click or drag to jump ----------
+const mini = $("mini"), m2 = mini.getContext("2d");
+const MPAD = 6, MTOP = 16;
+let MW = 0, MH = 0, miniCache = null, miniDirty = true;
+function miniResize() {
+  const r = mini.getBoundingClientRect();
+  MW = r.width; MH = r.height;
+  mini.width = Math.round(MW * dpr); mini.height = Math.round(MH * dpr);
+  miniDirty = true;
+}
+new ResizeObserver(miniResize).observe(mini);
+const miniSpan = () => [Math.min(startBeat, song.bars[0].start), endBeat];
+const mx = b => { const [a, z] = miniSpan(); return MPAD + (b - a) / (z - a) * (MW - 2 * MPAD); };
+const mBeat = x => { const [a, z] = miniSpan(); return a + (x - MPAD) / (MW - 2 * MPAD) * (z - a); };
+
+// Where the music changes character: a big tempo change (not the closing ritardando) or a new metre.
+function sectionMarks() {
+  const marks = [], m = song.tempoMap;
+  for (let i = 1; i < m.length; i++) {
+    const r = m[i].bpm / m[i - 1].bpm;
+    if ((r > 1.25 || r < 0.8) && m[i].beat < endBeat - 8 && !marks.some(x => Math.abs(x - m[i].beat) < 4)) marks.push(m[i].beat);
+  }
+  const bars = song.bars;
+  for (let i = 2; i < bars.length - 1; i++) {
+    const a = bars[i - 1], b = bars[i];
+    if ((a.len !== b.len || a.unit !== b.unit) && bars[i + 1].len === b.len && b.start < endBeat - 8 && !marks.some(x => Math.abs(x - b.start) < 4)) marks.push(b.start);
+  }
+  return marks;
+}
+
+function renderMini() {
+  miniCache = miniCache || document.createElement("canvas");
+  miniCache.width = mini.width; miniCache.height = mini.height;
+  const c = miniCache.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.fillStyle = colors.surface; c.fillRect(0, 0, MW, MH);
+  // Bar numbers, as sparse as the width needs.
+  const [a, z] = miniSpan(), pxPerBar = (MW - 2 * MPAD) / ((z - a) / (song.bars[1] ? song.bars[1].len : 4));
+  const every = [1, 2, 4, 8, 16, 32, 64].find(k => k * pxPerBar >= 34) || 128;
+  c.font = "500 9px 'IBM Plex Mono', monospace"; c.textBaseline = "middle"; c.textAlign = "left";
+  for (const bar of song.bars) {
+    if (bar.n < 1 || (bar.n - 1) % every) continue;
+    const x = mx(bar.start);
+    c.fillStyle = colors.line; c.fillRect(Math.round(x), MTOP - 2, 1, MH - MTOP);
+    c.fillStyle = colors.muted; c.fillText(String(bar.n), x + 2, 8);
+  }
+  // Every note of every voice that's on, lowest voices first.
+  const h = MH - MTOP - 4, ph = Math.max(1.2, h / (hi - lo + 1));
+  for (const t of drawOrder()) {
+    const tr = song.tracks[t];
+    if (!tr.on) continue;
+    c.fillStyle = colors["v" + tr.color];
+    c.globalAlpha = spot.size && !spot.has(tr) ? 0.25 : 1;
+    for (const n of tr.notes) {
+      const x = mx(n.start), w = Math.max(1, mx(n.start + n.dur) - x);
+      c.fillRect(x, MTOP + (hi - n.midi) / (hi - lo + 1) * h, w, ph);
+    }
+  }
+  c.globalAlpha = 1;
+  // Section marks
+  c.fillStyle = colors["gilt-hi"];
+  for (const b of sectionMarks()) {
+    const x = mx(b);
+    c.fillRect(Math.round(x), 0, 2, MH);
+    c.beginPath(); c.moveTo(x + 2, 1); c.lineTo(x + 9, 4.5); c.lineTo(x + 2, 8); c.closePath(); c.fill();
+  }
+  miniDirty = false;
+}
+
+function drawMini(now, b0, b1) {
+  if (!MW) return;
+  if (miniDirty || miniCache.ver !== colors.ver) { renderMini(); miniCache.ver = colors.ver; }
+  m2.setTransform(1, 0, 0, 1, 0, 0);
+  m2.drawImage(miniCache, 0, 0);
+  m2.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // The part of the movement the lane shows, and the line.
+  const x0 = Math.max(MPAD, mx(b0)), x1 = Math.min(MW - MPAD, mx(b1));
+  m2.fillStyle = colors.ink; m2.globalAlpha = 0.08; m2.fillRect(x0, 1, Math.max(2, x1 - x0), MH - 2); m2.globalAlpha = 1;
+  m2.strokeStyle = colors.ink; m2.lineWidth = 1; m2.strokeRect(x0 + 0.5, 1.5, Math.max(2, x1 - x0) - 1, MH - 3);
+  m2.fillStyle = colors["gilt-hi"]; m2.fillRect(Math.round(mx(now)) - 1, 0, 2, MH);
+}
+
+// A mouse jumps on press. A finger jumps on a tap or once it moves sideways, so a vertical swipe
+// that starts on the strip just scrolls the page (the browser cancels the pointer for that).
+let miniDown = false, miniX0 = 0, miniLive = false;
+const miniSeek = e => { const r = mini.getBoundingClientRect(); seek(mBeat(e.clientX - r.left)); };
+mini.addEventListener("pointerdown", e => {
+  ensureAudio();
+  miniDown = true; miniX0 = e.clientX; miniLive = e.pointerType !== "touch";
+  if (miniLive) { mini.setPointerCapture(e.pointerId); miniSeek(e); }
+});
+mini.addEventListener("pointermove", e => {
+  if (!miniDown) return;
+  if (!miniLive && Math.abs(e.clientX - miniX0) > 6) { miniLive = true; mini.setPointerCapture(e.pointerId); }
+  if (miniLive) miniSeek(e);
+});
+mini.addEventListener("pointerup", e => { if (miniDown && !miniLive) miniSeek(e); miniDown = false; });
+mini.addEventListener("pointercancel", () => { miniDown = false; });
+
+const barIdx = b => Time.barIdx(song.bars, b);
+// Lower voices first so higher ones sit on top; a spotlit voice always goes last.
+function drawOrder() {
+  const order = song.tracks.map((_, i) => i).reverse();
+  return spot.size ? order.filter(i => !spot.has(song.tracks[i])).concat(order.filter(i => spot.has(song.tracks[i]))) : order;
+}
+const barInfo = b => Time.barInfo(song.bars, b);
+
+function draw() {
+  requestAnimationFrame(draw);
+  if (!W || !song) return;
+  updateChord();
+  const holding = (holdMode || singWait) && !playing;
+  const st = singPending();   // the next note to sing (and any that start with it)
+  const isSt = n => st && n.tr === st.tr && Math.abs(n.start - st.start) < 1e-3;
+  const now = beatHeard();
+  const c = g2, lh = laneH(), px = playX();
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+
+  // Pitch lanes, with a rule under every B (the tonic).
+  for (let m = lo; m <= hi; m++) {
+    c.fillStyle = BLACK.has(m % 12) ? colors["lane-alt"] : colors.lane;
+    c.fillRect(GUTTER, yOf(m), W - GUTTER, lh + 0.5);
+    if (m % 12 === 11) { c.fillStyle = colors.line; c.fillRect(GUTTER, yOf(m) + lh, W - GUTTER, 1); }
+  }
+
+  // Bar lines and beat ticks
+  const b0 = now - px / pxPerBeat, b1 = now + (W - px) / pxPerBeat;
+  c.font = "500 11px 'IBM Plex Mono', monospace";
+  c.textBaseline = "middle"; c.textAlign = "left";
+  let lastLabel = -1e9;
+  for (let i = barIdx(b0); i < song.bars.length && song.bars[i].start <= b1; i++) {
+    const bar = song.bars[i], prev = song.bars[i - 1];
+    for (let t = 0; t < bar.len - 1e-6; t += bar.unit) {
+      const x = xOf(bar.start + t, now);
+      if (x < GUTTER) continue;
+      c.fillStyle = colors.line;
+      c.globalAlpha = t === 0 ? 1 : 0.45;
+      c.fillRect(Math.round(x), TOP, 1, H - TOP - BOTTOM);
+      c.globalAlpha = 1;
+    }
+    const x = xOf(bar.start, now);
+    // Number bars, thinning the labels out when zoomed far out; mark metre changes.
+    if (bar.n >= 1 && x >= GUTTER && x - lastLabel > 26) {
+      const metre = prev && (prev.unit !== bar.unit || Math.abs(prev.len - bar.len) > 1e-6) && i < song.bars.length - 1 && song.bars[i + 1].len === bar.len;
+      c.fillStyle = colors.muted;
+      c.fillText(metre ? `${bar.n} · ${Math.round(bar.len / bar.unit)}/${Math.round(4 / bar.unit)}` : String(bar.n), x + 4, TOP / 2);
+      lastLabel = x;
+    }
+  }
+
+  c.save();
+  c.beginPath(); c.rect(GUTTER, 0, W - GUTTER, H); c.clip();
+
+  // Melodic contours: a thin thread through each voice's note heads. Lower voices first so the flute sits on top.
+  for (const t of drawOrder()) {
+    const tr = song.tracks[t];
+    if (!tr.on || !tr.mono) continue;
+    c.beginPath();
+    let started = false;
+    for (let i = firstAtOrAfter(tr.notes, b0 - 4); i < tr.notes.length && tr.notes[i].start < b1 + 1; i++) {
+      const n = tr.notes[i], x = xOf(n.start, now) + 3, y = yOf(n.midi) + lh / 2;
+      if (!started) { c.moveTo(x, y); started = true; } else c.lineTo(x, y);
+    }
+    c.strokeStyle = colors["v" + tr.color];
+    c.globalAlpha = spot.size ? (spot.has(tr) ? 0.75 : 0.12) : 0.3; c.lineWidth = spot.has(tr) ? 1.6 : 1;
+    c.stroke(); c.globalAlpha = 1;
+  }
+
+  // Notes, lower voices first.
+  const r = Math.max(Math.min(lh / 2 - 1, 6), 1);
+  const h = Math.max(lh - 2, 2);
+  let lead = null, top = null;
+  c.textAlign = "center";
+  c.font = `500 ${Math.min(11, h - 3)}px 'IBM Plex Mono', monospace`;
+  for (const t of drawOrder()) {
+    const tr = song.tracks[t];
+    if (!tr.on) continue;
+    const fade = spot.size && !spot.has(tr) ? 0.28 : 1;
+    const col = colors["v" + tr.color];
+    for (let i = firstAtOrAfter(tr.notes, b0 - 8); i < tr.notes.length && tr.notes[i].start < b1; i++) {
+      const n = tr.notes[i], x = xOf(n.start, now), w = Math.max(n.dur * pxPerBeat - 3, 3), y = yOf(n.midi) + 1;
+      if (x + w < GUTTER) continue;
+      const active = holding ? chord.has(n) || (singWait && isSt(n)) : now >= n.start && now < n.start + n.dur;
+      const past = !active && now >= n.start + n.dur;
+      if (active) { if (t === leadIdx) lead = n; if (!top || n.midi > top.midi) top = n; }
+      if (active) { c.shadowColor = col; c.shadowBlur = 16; }
+      c.fillStyle = col;
+      c.globalAlpha = (past ? 0.3 : active ? 1 : 0.82) * fade;
+      c.beginPath(); c.roundRect(x, y, w, h, r); c.fill();
+      c.shadowBlur = 0; c.globalAlpha = 1;
+      if (isSt(n)) { c.strokeStyle = colors["gilt-hi"]; c.lineWidth = 3; c.stroke(); }
+      else if (n === hover || (arpMidi === n.midi && chord.has(n))) { c.strokeStyle = colors.ink; c.lineWidth = 2; c.stroke(); }
+      if (w > 30 && h >= 13) { c.fillStyle = colors.surface; c.fillText(noteName(n.midi), x + w / 2, y + h / 2 + 0.5); }
+      // Sung notes get a bar underneath: gilt when sung in time, faint when the music had to wait.
+      if (n.sung && singOn) { c.fillStyle = n.sung === 1 ? colors["gilt-hi"] : colors.muted; c.fillRect(x, y + h + 0.5, w, 2); }
+    }
+  }
+  if (singOn) drawSingTrail(c, now, lh, px);
+  c.restore();
+
+  // Playhead
+  c.fillStyle = colors["gilt-hi"];
+  c.fillRect(Math.round(px) - (holding ? 1.5 : 1), TOP - 4, holding ? 3 : 2, H - TOP - BOTTOM + 4);
+  c.beginPath(); c.moveTo(px - 6, TOP - 10); c.lineTo(px + 6, TOP - 10); c.lineTo(px, TOP - 2); c.closePath(); c.fill();
+  if (!playing) {
+    // A grip at the foot of the line says it can be dragged.
+    c.beginPath(); c.roundRect(px - 7, H - BOTTOM - 26, 14, 22, 4); c.fill();
+    c.fillStyle = colors.surface;
+    for (const dx of [-2.5, 1.5]) c.fillRect(px + dx, H - BOTTOM - 21, 1, 12);
+  }
+
+  // Gutter with pitch names; pitches sounding right now light up.
+  c.fillStyle = colors.surface; c.fillRect(0, 0, GUTTER, H);
+  c.fillStyle = colors.line; c.fillRect(GUTTER - 1, 0, 1, H);
+  c.textAlign = "right";
+  // midi -> the voice to colour it by: a spotlit voice wins a shared pitch, then the higher voice.
+  const sounding = new Map(), rank = tr => spot.has(tr) ? -1 : song.tracks.indexOf(tr);
+  const claim = n => { const cur = sounding.get(n.midi); if (!cur || rank(n.tr) < rank(cur)) sounding.set(n.midi, n.tr); };
+  if (holding) for (const n of chord) claim(n);
+  else for (let i = firstAtOrAfter(notes, now - 8); i < notes.length && notes[i].start <= now; i++) if (now < notes[i].start + notes[i].dur) claim(notes[i]);
+  c.font = `400 ${Math.max(8, Math.min(12, lh * 0.8))}px 'IBM Plex Mono', monospace`;
+  for (let m = lo; m <= hi; m++) {
+    if (lh < 12 && BLACK.has(m % 12)) continue;
+    if (lh < 7 && m % 12 !== 11 && m % 12 !== 6) continue;
+    c.fillStyle = sounding.has(m) ? colors["gilt-hi"] : colors.muted;
+    c.fillText(noteName(m), GUTTER - 8, yOf(m) + lh / 2);
+  }
+
+  drawMini(now, b0, b1);
+  drawPiano(sounding);
+  for (const bd of boards) drawBoard(bd, sounding);
+
+  // Readouts
+  const bi = barInfo(now);
+  $("rdBar").textContent = bi.label;
+  const q = String(Math.round(bpmAt(now)));
+  if ($("rdBpm").textContent !== q) $("rdBpm").textContent = q;
+  const shown = song.tracks[leadIdx].on ? lead : top;
+  $("rdNote").textContent = shown ? noteName(shown.midi) : "–";
+
+  // Keep hover in sync while notes slide under a still pointer (visual only; sound fires on pointer moves).
+  if (pointer && !dragging) updateHover(pointer.x, pointer.y, false);
+}
+
+// The pitch you're singing: a trail behind the line, and a dot on it, folded into the octave of the notes.
+function drawSingTrail(c, now, lh, px) {
+  c.beginPath();
+  let pen = false;
+  for (const p of singTrail) {
+    if (p.gap) { pen = false; continue; }
+    const x = xOf(p.b, now), y = yOf(p.m) + lh / 2;
+    if (pen) c.lineTo(x, y); else { c.moveTo(x, y); pen = true; }
+  }
+  c.strokeStyle = colors.ink; c.globalAlpha = 0.7; c.lineWidth = 2.5; c.lineJoin = c.lineCap = "round";
+  c.stroke(); c.globalAlpha = 1;
+  if (singFolded == null) return;
+  const st = singPending(), ok = st && Math.abs(wrap12(singHeard - st.midi)) < SING_TOL;
+  c.beginPath(); c.arc(px, yOf(singFolded) + lh / 2, Math.max(4, Math.min(lh * 0.6, 8)), 0, Math.PI * 2);
+  c.fillStyle = ok ? colors["gilt-hi"] : colors.ink; c.fill();
+  c.strokeStyle = colors.surface; c.lineWidth = 2; c.stroke();
+}
+
+function noteAt(x, y) {
+  if (x < GUTTER || y < TOP) return null;
+  const b = beatHeard() + (x - playX()) / pxPerBeat;
+  const m = hi - Math.floor((y - TOP) / laneH());
+  // Top voice wins where notes overlap, matching the drawing order.
+  for (const tr of song.tracks) {
+    if (!tr.on) continue;
+    for (let i = firstAtOrAfter(tr.notes, b - 8); i < tr.notes.length && tr.notes[i].start <= b; i++) {
+      const n = tr.notes[i];
+      if (n.midi === m && b >= n.start && b <= n.start + n.dur) return n;
+    }
+  }
+  return null;
+}
+
+const hearNote = (n, vel) => voice(n.midi, ctx.currentTime + 0.005, Math.min(Math.max((secAt(n.start + n.dur) - secAt(n.start)) / speed, 0.25), 0.8), vel, n.tr.kind);
+
+function updateHover(x, y, sound) {
+  const n = noteAt(x, y);
+  if (n !== hover) {
+    hover = n;
+    if (n && sound && ctx && ctx.state === "running") hearNote(n, 0.75);
+  }
+  if (hover) {
+    const bi = barInfo(hover.start);
+    tip.innerHTML = `<strong>${noteName(hover.midi)}</strong>`;
+    tip.append(`${hover.tr.name} · ${bi.bar < 1 ? "pickup" : "bar " + bi.label} · beat ${bi.beat} · ${lenName(hover.dur)}`);
+    tip.style.left = Math.min(Math.max(x, 130), W - 130) + "px";
+    tip.style.top = Math.max(y, 70) + "px";
+    tip.hidden = false;
+  } else tip.hidden = true;
+}
+
+// ---------- Piano: lights up what's sounding; press a key to play it ----------
+// It spans whole octaves around the movement's range. Each pointer (mouse or finger) holds one key and
+// can slide to the next, so several fingers make a chord and a drag makes a glissando.
+const piano = $("piano"), p2 = piano.getContext("2d");
+let PW = 0, PH = 0, keyRects = new Map(), keyLayout = "";
+const pressed = new Map();   // pointerId -> { midi, v }; midi is null while slid off the keys
+function pianoResize() {
+  const r = piano.getBoundingClientRect();
+  PW = r.width; PH = r.height;
+  piano.width = Math.round(PW * dpr); piano.height = Math.round(PH * dpr);
+}
+new ResizeObserver(pianoResize).observe(piano);
+const blackH = () => PH * 0.62;
+
+function layoutKeys() {
+  const pLo = Math.floor((lo + 1) / 12) * 12, pHi = Math.ceil(hi / 12) * 12 - 1;   // C below the lowest note to B above the highest
+  const id = `${PW}:${pLo}:${pHi}`;
+  if (id === keyLayout) return;
+  keyLayout = id; keyRects = new Map();
+  const whites = [];
+  for (let m = pLo; m <= pHi; m++) if (!BLACK.has(m % 12)) whites.push(m);
+  const ww = PW / whites.length, bw = ww * 0.6;
+  whites.forEach((m, i) => keyRects.set(m, { x: i * ww, w: ww, black: false }));
+  for (let m = pLo; m <= pHi; m++) if (BLACK.has(m % 12)) { const left = keyRects.get(m - 1); keyRects.set(m, { x: left.x + left.w - bw / 2, w: bw, black: true }); }
+}
+
+function keyAt(x, y) {
+  if (y < 0 || y > PH) return null;
+  let white = null;
+  for (const [m, k] of keyRects) {
+    if (x < k.x || x >= k.x + k.w) continue;
+    if (k.black) { if (y < blackH()) return m; } else white = m;
+  }
+  return white;
+}
+
+function drawPiano(sounding) {
+  if (!PW) return;
+  layoutKeys();
+  const c = p2, bh = blackH();
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, PW, PH);
+  const mine = new Set([...pressed.values()].map(p => p.midi));
+  const fill = (m, base) => mine.has(m) ? colors.muted : sounding.has(m) ? colors["v" + sounding.get(m).color] : base;
+  c.font = "500 9px 'IBM Plex Mono', monospace"; c.textAlign = "center"; c.textBaseline = "alphabetic";
+  for (const [m, k] of keyRects) {
+    if (k.black) continue;
+    const lit = mine.has(m) || sounding.has(m);
+    c.fillStyle = fill(m, colors["key-white"]);
+    c.fillRect(k.x, 0, k.w, PH);
+    c.fillStyle = colors.line; c.fillRect(Math.round(k.x), 0, 1, PH);
+    if (m % 12 === 0 && k.w >= 12) { c.fillStyle = lit ? colors.surface : colors.muted; c.fillText(noteName(m), k.x + k.w / 2, PH - 6); }
+  }
+  for (const [m, k] of keyRects) {
+    if (!k.black) continue;
+    c.fillStyle = fill(m, colors["key-black"]);
+    c.beginPath(); c.roundRect(k.x, -2, k.w, bh + 2, [0, 0, 3, 3]); c.fill();
+  }
+  // The arpeggio's current note gets an outline, as in the lane.
+  const a = arpMidi != null && keyRects.get(arpMidi);
+  if (a) { c.strokeStyle = colors.ink; c.lineWidth = 2; c.strokeRect(a.x + 1, 1, a.w - 2, (a.black ? bh : PH) - 2); }
+  // A gilt rule along the top edge, like the felt strip above the keys.
+  c.fillStyle = colors["gilt-hi"]; c.fillRect(0, 0, PW, 2);
+}
+
+// Keys sound in the lead voice's timbre (the flute, or the spotlit voice) and straight into the mix,
+// so Hold chord's level and the arpeggio's muting don't touch them.
+// A hit is { m, pos }: the pitch, and on a fretboard which string and fret it was played on.
+function pressKey(id, hit) {
+  const cur = pressed.get(id), m = hit ? hit.m : null, pos = hit && hit.pos || null;
+  const where = p => p ? `${p.bd.id}:${p.s}:${p.f}` : "";
+  if (cur && cur.midi === m && where(cur.pos) === where(pos)) return;
+  if (cur && cur.v) cur.v.release();
+  const kind = song ? song.tracks[leadIdx].kind : "wind";
+  pressed.set(id, { midi: m, pos, v: m == null || !ctx ? null : voice(m, ctx.currentTime + 0.005, Infinity, 0.8, kind, null, master) });
+}
+function liftKey(id) {
+  const cur = pressed.get(id);
+  if (cur && cur.v) cur.v.release();
+  pressed.delete(id);
+}
+// hitAt(x, y) turns a point on the element into a hit, or null between keys.
+function playable(el, hitAt) {
+  const at = e => { const r = el.getBoundingClientRect(); return hitAt(e.clientX - r.left, e.clientY - r.top); };
+  el.addEventListener("pointerdown", e => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.preventDefault();
+    ensureAudio();
+    el.setPointerCapture(e.pointerId);
+    pressKey(e.pointerId, at(e));
+  });
+  el.addEventListener("pointermove", e => { if (pressed.has(e.pointerId)) pressKey(e.pointerId, at(e)); });
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) el.addEventListener(type, e => liftKey(e.pointerId));
+}
+playable(piano, (x, y) => { const m = keyAt(x, y); return m == null ? null : { m }; });
+window.addEventListener("blur", () => { for (const id of [...pressed.keys()]) liftKey(id); });
+
+// ---------- Guitars: a standard neck and a lower one, both lit like the piano ----------
+// Standard tuning is fourths apart except for the major third from G to B; the low guitar keeps that
+// same shape, moved down, so chord shapes carry over. Strings are listed lowest first and drawn as in
+// tab, high E on top. A pitch can sit on several strings, so each sounding note gets one place: preferably a
+// string no higher note took, near where that voice's hand last was and low on the neck (open strings
+// are cheap). That keeps each voice in one position instead of jumping around the neck.
+const FGUT = 40, FTOP = 6, FBOT = 16, INLAYS = [3, 5, 7, 9, 12, 15, 17, 19, 21, 24];
+const boards = [{ id: 0, cv: $("fret0"), shift: () => 0 }, { id: 1, cv: $("fret1"), shift: () => Number($("lowTune").value) }];
+for (const bd of boards) {
+  Object.assign(bd, { c: bd.cv.getContext("2d"), W: 0, H: 0, hand: new WeakMap() });
+  new ResizeObserver(() => {
+    const r = bd.cv.getBoundingClientRect();
+    bd.W = r.width; bd.H = r.height;
+    bd.cv.width = Math.round(r.width * dpr); bd.cv.height = Math.round(r.height * dpr);
+  }).observe(bd.cv);
+  playable(bd.cv, (x, y) => boardHit(bd, x, y));
+}
+const tuningOf = bd => tuning(bd.shift());
+// The notes in place on this neck; one you're pressing on it stays where your finger is.
+const placeOn = (bd, items) => placeNotes(tuningOf(bd), bd.hand, items.map(it => it.pos && it.pos.bd === bd ? { ...it, at: it.pos } : it));
+// Frets narrow up the neck like a real one, softened so the high frets stay wide enough to read and tap.
+const fretX = (bd, n) => FGUT + (bd.W - FGUT - 6) * (0.45 * n / FRETS + 0.55 * (1 - 2 ** (-n / 12)) / (1 - 2 ** (-FRETS / 12)));
+const gap = bd => (bd.H - FTOP - FBOT) / 6;
+const stringY = (bd, s) => FTOP + (5.5 - s) * gap(bd);
+const slotX = (bd, f) => f === 0 ? FGUT - 11 : (fretX(bd, f - 1) + fretX(bd, f)) / 2;
+
+function boardHit(bd, x, y) {
+  if (y < 0 || y > bd.H || x > fretX(bd, FRETS)) return null;
+  const s = Math.min(5, Math.max(0, 5 - Math.floor((y - FTOP) / gap(bd))));
+  let f = 0;
+  while (f < FRETS && x >= fretX(bd, f)) f++;
+  if (x < FGUT) f = 0;
+  return { m: tuningOf(bd)[s] + f, pos: { bd, s, f } };
+}
+
+
+function drawBoard(bd, sounding) {
+  if (!bd.W) return;
+  const c = bd.c, W = bd.W, H = bd.H, tune = tuningOf(bd), g = gap(bd), y0 = stringY(bd, 5), y1 = stringY(bd, 0);
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+  // The neck, its inlays, frets and nut.
+  c.fillStyle = colors.lane; c.fillRect(FGUT, y0 - g / 2, fretX(bd, FRETS) - FGUT, y1 - y0 + g);
+  c.fillStyle = colors.line;
+  for (const f of INLAYS) {
+    const x = slotX(bd, f), r = Math.min(4, (fretX(bd, f) - fretX(bd, f - 1)) * 0.2);
+    for (const y of f % 12 ? [H / 2 - FBOT / 2 + FTOP / 2] : [stringY(bd, 4) + g / 2, stringY(bd, 1) - g / 2]) { c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); }
+  }
+  for (let n = 1; n <= FRETS; n++) c.fillRect(Math.round(fretX(bd, n)), y0 - g / 2, 1.5, y1 - y0 + g);
+  c.fillStyle = colors.ink; c.fillRect(FGUT - 2, y0 - g / 2, 4, y1 - y0 + g);
+  c.font = "500 9px 'IBM Plex Mono', monospace"; c.textAlign = "center"; c.textBaseline = "alphabetic"; c.fillStyle = colors.muted;
+  for (const f of INLAYS) if (fretX(bd, f) - fretX(bd, f - 1) >= 11 || f % 12 === 0) c.fillText(String(f), slotX(bd, f), H - 4);
+  // Strings, thicker toward the bass, with their names in the gutter.
+  c.textAlign = "left"; c.textBaseline = "middle"; c.font = "500 10px 'IBM Plex Mono', monospace";
+  for (let s = 0; s < 6; s++) {
+    const y = stringY(bd, s);
+    c.fillStyle = colors.muted; c.globalAlpha = 0.85;
+    c.fillRect(FGUT - 22, y - (0.5 + (5 - s) * 0.22), fretX(bd, FRETS) - FGUT + 22, 1 + (5 - s) * 0.44);
+    c.globalAlpha = 1;
+    c.fillText(NAMES[tune[s] % 12], 4, y);
+  }
+  // What's sounding, plus what you're playing, one dot each.
+  const items = [...sounding].map(([midi, tr]) => ({ midi, tr }));
+  for (const p of pressed.values()) if (p.midi != null) items.push({ midi: p.midi, tr: null, pos: p.pos, mine: true });
+  const r = Math.max(3, Math.min(g * 0.44, 9));
+  c.textAlign = "center"; c.font = `500 ${Math.round(r * 1.05)}px 'IBM Plex Mono', monospace`;
+  for (const n of placeOn(bd, items)) {
+    const x = slotX(bd, n.f), y = stringY(bd, n.s), col = n.mine ? colors.muted : colors["v" + n.tr.color];
+    c.globalAlpha = !n.mine && spot.size && !spot.has(n.tr) ? 0.35 : 1;
+    c.shadowColor = col; c.shadowBlur = n.mine ? 0 : 10;
+    c.fillStyle = col; c.beginPath(); c.arc(x, y, r, 0, 7); c.fill();
+    c.shadowBlur = 0;
+    if (r >= 7) { c.fillStyle = colors.surface; c.fillText(NAMES[n.midi % 12], x, y + 0.5); }
+    c.globalAlpha = 1;
+  }
+}
+
+// ---------- Input ----------
+let dragging = false, lineDrag = false, downX = 0, downBeat = 0, moved = false;
+// A fingertip needs a wider target than a mouse pointer.
+const nearLine = (x, touch) => !playing && x > GUTTER && Math.abs(x - playX()) <= (touch ? 24 : 10);
+
+// Moving the line keeps the score still: the line's x and the beat under it change together.
+function moveLine(x) {
+  const nx = Math.min(W - 10, Math.max(GUTTER + 10, x));
+  viewBeat = Math.min(endBeat + 0.5, Math.max(startBeat - 1, viewBeat + (nx - playX()) / pxPerBeat));
+  headFrac = (nx - GUTTER) / (W - GUTTER);
+}
+
+// On a touch screen the browser keeps vertical swipes for scrolling the page (touch-action: pan-y) and
+// cancels our pointer once it takes one. So a touch neither moves the score or the line nor plays a note
+// until it has clearly gone sideways, and a cancelled touch never counts as a tap.
+let touch = null;   // { x0, y0, axis } while a finger is down on the lane
+
+cv.addEventListener("pointermove", e => {
+  const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  if (touch && !touch.axis) {
+    const dx = e.clientX - touch.x0, dy = e.clientY - touch.y0;
+    if (Math.hypot(dx, dy) < 8) return;
+    touch.axis = Math.abs(dy) > Math.abs(dx) ? "y" : "x";
+  }
+  if (touch && touch.axis === "y") return;
+  pointer = { x, y };
+  if (lineDrag) { moveLine(x); return; }
+  if (dragging) {
+    if (Math.abs(x - downX) > 4) moved = true;
+    if (moved) { seek(downBeat - (x - downX) / pxPerBeat); hover = null; tip.hidden = true; }
+    return;
+  }
+  stage.classList.toggle("line", nearLine(x));
+  updateHover(x, y, !holdMode || playing);
+});
+cv.addEventListener("pointerleave", () => { pointer = null; hover = null; tip.hidden = true; });
+cv.addEventListener("pointerdown", e => {
+  ensureAudio();
+  const r = cv.getBoundingClientRect(), x = e.clientX - r.left;
+  touch = e.pointerType === "touch" ? { x0: e.clientX, y0: e.clientY, axis: null } : null;
+  if (!touch) cv.setPointerCapture(e.pointerId);
+  if (nearLine(x, !!touch)) { lineDrag = true; hover = null; tip.hidden = true; return; }
+  dragging = true; moved = false; downX = x; downBeat = beatNow();
+  stage.classList.add("dragging");
+});
+const endDrag = e => {
+  const wasTouch = touch;
+  touch = null;
+  if (wasTouch) { pointer = null; hover = null; tip.hidden = true; }
+  if (lineDrag) { lineDrag = false; return; }
+  if (!dragging) return;
+  dragging = false;
+  stage.classList.remove("dragging");
+  if (!moved && ctx && e.type === "pointerup" && !(wasTouch && wasTouch.axis === "y")) {
+    const r = cv.getBoundingClientRect();
+    const n = noteAt(e.clientX - r.left, e.clientY - r.top);
+    if (n) { hover = n; hearNote(n, 0.8); }
+  }
+};
+cv.addEventListener("pointerup", endDrag);
+cv.addEventListener("pointercancel", endDrag);
+cv.addEventListener("wheel", e => {
+  const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  if (!d) return;
+  e.preventDefault();
+  seek(beatNow() + d / pxPerBeat);
+}, { passive: false });
+
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, select, textarea")) return;
+  if (e.code === "Space" && e.target.closest("button")) e.target.blur();   // Space means play, not "press the focused button"
+  if (e.code === "Space") { e.preventDefault(); ensureAudio(); playing ? pause() : play(); }
+  else if ((e.code === "ArrowRight" || e.code === "ArrowLeft") && holdMode && !playing && !e.shiftKey) {
+    // Step to the next or previous moment where any voice that's on starts a note. Played MIDI is humanized,
+    // so onsets within a 32nd of each other count as one chord and the step lands on the last of them.
+    e.preventDefault();
+    const now = beatNow(), WIN = 0.0625;
+    let i = e.code === "ArrowRight" ? firstAtOrAfter(notes, now + 0.02) : firstAtOrAfter(notes, now - WIN - 0.01) - 1;
+    if (i < 0 || i >= notes.length) return;
+    if (e.code === "ArrowRight") { const t0 = notes[i].start; while (i + 1 < notes.length && notes[i + 1].start <= t0 + WIN) i++; }
+    seek(notes[i].start);
+  }
+  else if (e.code === "ArrowRight") { e.preventDefault(); const i = barIdx(beatNow()); if (i + 1 < song.bars.length) seek(song.bars[i + 1].start); }
+  else if (e.code === "ArrowLeft") {
+    // Back to the start of this bar, or to the previous bar when already (nearly) there.
+    e.preventDefault();
+    const now = beatNow(), i = barIdx(now);
+    seek(song.bars[now - song.bars[i].start > 0.25 || i === 0 ? i : i - 1].start);
+  }
+  else if (e.code === "KeyA" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (holdMode) setArp(!arpOn); }
+  else if (e.code === "KeyH" && singOn && !e.metaKey && !e.ctrlKey) { e.preventDefault(); singGuide(singPending()); }
+  else if (e.code === "Home") { e.preventDefault(); seek(startBeat - 0.25); }
+});
+
+$("unlock").addEventListener("click", ensureAudio);
+$("play").addEventListener("click", () => playing ? pause() : play());
+$("restart").addEventListener("click", () => seek(startBeat - 0.25));
+// Back n bars from the start of the bar we're in.
+const backBars = n => { if (song) seek(song.bars[Math.max(0, barIdx(beatNow()) - n)].start); };
+$("back1").addEventListener("click", () => backBars(1));
+$("back5").addEventListener("click", () => backBars(5));
+// The piano and the guitars are hidden until asked for; the choice is remembered on this device.
+for (const [btn, el, key] of [["showPiano", "piano", "bv.piano"], ["showGuitar", "guitar", "bv.guitar"]]) {
+  const show = on => { $(el).hidden = !on; $(btn).setAttribute("aria-pressed", String(on)); };
+  try { show(localStorage.getItem(key) === "1"); } catch (e) { /* storage unavailable */ }
+  $(btn).addEventListener("click", () => {
+    const on = $(el).hidden;
+    show(on);
+    try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) { /* storage unavailable */ }
+  });
+}
+function setHold(on) {
+  holdMode = on;
+  $("hold").setAttribute("aria-pressed", String(on));
+  stage.classList.toggle("holding", on);
+  $("arp").disabled = !on;
+  if (!on) setArp(false);
+  if (on) { ensureAudio(); pause(); setSing(false); singWait = null; }
+}
+$("hold").addEventListener("click", () => setHold(!holdMode));
+$("sing").addEventListener("click", () => setSing(!singOn));
+$("singVoice").addEventListener("change", () => { if (singOn) singStart(); });
+$("singTag").addEventListener("click", () => singGuide(singPending()));
+$("arp").addEventListener("click", () => setArp(!arpOn));
+$("arpRate").addEventListener("input", e => { $("arpOut").textContent = e.target.value + "/s"; });
+$("rev").addEventListener("input", e => {
+  $("revOut").textContent = e.target.value + "%";
+  if (wet) wet.gain.setTargetAtTime(revAmount(), ctx.currentTime, 0.03);
+});
+$("room").addEventListener("change", e => {
+  if (rev) rev.buffer = makeIR(Number(e.target.value));
+});
+$("goForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const n = Math.round(Number($("goBar").value));
+  const bar = song.bars.find(b => b.n === n);
+  if (bar) { seek(bar.start); $("goBar").blur(); }
+  else $("goBar").value = "";
+});
+$("tempo").addEventListener("input", e => setSpeed(Number(e.target.value)));
+$("zoom").addEventListener("input", e => { pxPerBeat = Number(e.target.value); });
+$("vol").addEventListener("input", () => { if (master) master.gain.setTargetAtTime(vol(), ctx.currentTime, 0.02); });
+
+// ---------- Movements ----------
+let loadToken = 0;
+async function showMovement(mv) {
+  pause();
+  const token = ++loadToken;
+  let buf;
+  try {
+    buf = await midiBuffer(mv);
+  } catch (err) {
+    if (token === loadToken) $("srcErr").textContent = err.message;
+    return;
+  }
+  if (token !== loadToken) return; // another movement or file was picked meanwhile
+  $("srcErr").textContent = "";
+  const info = { ...SUITE, ...mv };
+  loadSong(parseMidi(buf), info.credit(mv));
+  $("byline").textContent = info.byline;
+  $("aboutSrc").textContent = info.source;
+  $("mvTitle").textContent = mv.title;
+  $("pieceNote").textContent = `${mv.about} The file is in ${song.sig}.`;
+  for (const b of document.querySelectorAll("#movements button")) b.setAttribute("aria-current", String(b.dataset.id === mv.id));
+  try { history.replaceState(null, "", "#" + mv.slug); } catch (e) { /* not allowed in some frames */ }
+}
+MOVEMENTS.forEach((mv, i) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.dataset.id = mv.id;
+  if (mv.piece) {
+    const sep = document.createElement("span");
+    sep.className = "sep"; sep.setAttribute("aria-hidden", "true");
+    $("movements").append(sep);
+  } else b.innerHTML = `<span class="num">${i + 1}</span>`;
+  b.append(mv.title);
+  b.addEventListener("click", () => showMovement(mv));
+  $("movements").append(b);
+});
+
+async function loadFile(file) {
+  if (!file) return;
+  pause();
+  const token = ++loadToken;
+  try {
+    const buf = await file.arrayBuffer();
+    if (token !== loadToken) return;
+    loadSong(parseMidi(buf), file.name);
+    $("mvTitle").textContent = file.name.replace(/\.midi?$/i, "");
+    $("pieceNote").textContent = `Your own file, in ${song.sig}. Pick a movement above to go back to the suite.`;
+    for (const b of document.querySelectorAll("#movements button")) b.setAttribute("aria-current", "false");
+  } catch (err) {
+    $("srcErr").textContent = err.message;
+  }
+}
+$("midi").addEventListener("change", e => { loadFile(e.target.files[0]); e.target.value = ""; });
+stage.addEventListener("dragover", e => { e.preventDefault(); stage.classList.add("drop"); });
+stage.addEventListener("dragleave", () => stage.classList.remove("drop"));
+stage.addEventListener("drop", e => { e.preventDefault(); stage.classList.remove("drop"); loadFile(e.dataTransfer.files[0]); });
+
+if (window.matchMedia("(max-width: 600px)").matches) { pxPerBeat = 100; $("zoom").value = 100; }
+
+const fromHash = MOVEMENTS.find(m => "#" + m.slug === location.hash);
+showMovement(fromHash || MOVEMENTS.find(m => m.slug === "badinerie"));
+resize();
+requestAnimationFrame(draw);
