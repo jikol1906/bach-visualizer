@@ -1,0 +1,192 @@
+/* Layout: one instrument on one screen. Title strip, voice chips, a full-width scrolling score lane, a control rail, then a short programme note. */
+:root {
+  --bg: #e7ebf2;
+  --surface: #f5f7fb;
+  --ink: #1a2340;
+  --muted: #56627f;
+  --line: #c3cbdb;
+  --lane: #dde3ee;
+  --lane-alt: #d1d9e6;
+  --gilt: #9c6a14;
+  --gilt-hi: #c98d1f;
+  --key-white: #fbfcfe;
+  --key-black: #1f2846;
+  /* One colour per voice. v0 is the solo flute and shares the gilt accent. */
+  --v0: #9c6a14; --v1: #2d6c8c; --v2: #3f8461; --v3: #8a4c7c; --v4: #a24a36; --v5: #565ba6;
+  --err: #b3261e;
+  --display: "IM Fell English", "Iowan Old Style", Georgia, serif;
+  --body: "Alegreya Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1530; --surface: #131d3c; --ink: #ece5d0; --muted: #98a2c0; --line: #2a3762;
+    --lane: #111a37; --lane-alt: #172249; --gilt: #d6a443; --gilt-hi: #ffd27a;
+    --key-white: #dcd6c4; --key-black: #070c1e;
+    --v0: #e0ae4a; --v1: #6db4d6; --v2: #7cc69b; --v3: #cd9ad3; --v4: #ec8c70; --v5: #9fa4f0;
+    --err: #ff8a80;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1530; --surface: #131d3c; --ink: #ece5d0; --muted: #98a2c0; --line: #2a3762;
+  --lane: #111a37; --lane-alt: #172249; --gilt: #d6a443; --gilt-hi: #ffd27a;
+  --key-white: #dcd6c4; --key-black: #070c1e;
+  --v0: #e0ae4a; --v1: #6db4d6; --v2: #7cc69b; --v3: #cd9ad3; --v4: #ec8c70; --v5: #9fa4f0;
+  --err: #ff8a80;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--body); font-size: 16px; line-height: 1.5;
+  padding-inline: 16px; padding-block: 20px 40px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 14px; }
+
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 24px; }
+h1 { font-family: var(--display); font-weight: 400; font-size: clamp(2rem, 5vw, 3.1rem); line-height: 1.05; margin: 0; text-wrap: balance; }
+h1 em { color: var(--gilt); }
+.byline { font-family: var(--display); font-style: italic; color: var(--muted); font-size: 1.05rem; margin: 4px 0 0; }
+.readout { font-family: var(--mono); font-size: .85rem; color: var(--muted); font-variant-numeric: tabular-nums; display: flex; gap: 16px; flex-wrap: wrap; }
+.readout b { color: var(--ink); font-weight: 500; display: inline-block; }
+/* Fixed widths so changing values never re-wrap the header and shift the lane. */
+#rdBar { min-width: 6ch; } #rdNote { min-width: 3ch; } #rdBpm { min-width: 3ch; }
+
+.movements { display: flex; flex-wrap: wrap; gap: 4px 18px; border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+.movements button {
+  font: 400 1.1rem var(--display); color: var(--muted); background: none; border: 0;
+  border-bottom: 2px solid transparent; padding: 4px 0; margin-bottom: -3px; cursor: pointer;
+}
+.movements button .num { font: 500 .72rem var(--mono); margin-right: 6px; vertical-align: 2px; }
+.movements .sep { align-self: stretch; width: 1px; background: var(--line); margin: 6px 0; }
+.movements button:hover { color: var(--ink); }
+.movements button[aria-current="true"] { color: var(--ink); border-bottom-color: var(--gilt); }
+.movements button[aria-current="true"] .num { color: var(--gilt); }
+.voices { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.voices .label { font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  font: 500 .92rem var(--body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px 4px 8px; cursor: pointer;
+}
+.chip .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); border: 2px solid var(--c); }
+.chip[aria-pressed="false"] { color: var(--muted); border-style: dashed; }
+.chip[aria-pressed="false"] .dot { background: transparent; }
+.chip:hover { border-color: var(--c); }
+.chipwrap { display: inline-flex; align-items: stretch; }
+.chipwrap .chip { border-radius: 999px 0 0 999px; }
+.spot {
+  font: 400 .95rem var(--body); color: var(--muted); background: var(--surface); cursor: pointer;
+  border: 1px solid var(--line); border-left: 0; border-radius: 0 999px 999px 0; padding: 0 10px 0 7px;
+}
+.spot:hover { color: var(--ink); border-color: var(--c); }
+.spot[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: var(--surface); }
+.clearspot {
+  font: 500 .85rem var(--body); color: var(--muted); background: none; cursor: pointer;
+  border: 1px dashed var(--line); border-radius: 999px; padding: 4px 12px;
+}
+.clearspot:hover { color: var(--ink); border-color: var(--ink); }
+.clearspot[hidden] { display: none; }
+.spot:focus-visible, .chip:focus-visible, .clearspot:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
+
+.stage {
+  position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+  background: var(--surface); height: clamp(340px, 62vh, 700px);
+}
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; cursor: crosshair; }
+.stage.dragging canvas { cursor: grabbing; }
+.stage.drop { outline: 2px dashed var(--gilt-hi); outline-offset: -8px; }
+
+.tip {
+  position: absolute; pointer-events: none; z-index: 2;
+  background: var(--ink); color: var(--surface); border-radius: 4px;
+  padding: 6px 10px; font-family: var(--mono); font-size: .78rem; line-height: 1.35;
+  white-space: nowrap; transform: translate(-50%, calc(-100% - 12px));
+}
+.tip strong { font-family: var(--display); font-size: 1.3rem; font-weight: 400; display: block; }
+
+.unlock {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 3;
+  font: 500 .9rem var(--body); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--gilt); border-radius: 999px; padding: 8px 16px; cursor: pointer;
+}
+.unlock:focus-visible, button:focus-visible, input:focus-visible, label.file:focus-within {
+  outline: 2px solid var(--gilt-hi); outline-offset: 2px;
+}
+
+.rail { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Grid children may shrink below their content, so one wide row can never widen the whole page. */
+.wrap > * { min-width: 0; }
+/* Dragging the lane with a finger shouldn't start a text selection or a long-press menu. Only the
+   programme notes stay selectable. */
+.wrap > :not(.notes) { -webkit-user-select: none; user-select: none; }
+.wrap input { -webkit-user-select: text; user-select: text; }
+.stage, .mini, .piano, .fret { -webkit-touch-callout: none; }
+.rail button, label.file {
+  font: 500 .95rem var(--body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 4px; padding: 7px 14px; cursor: pointer;
+}
+.rail button:hover, label.file:hover { border-color: var(--gilt); }
+.rail button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); min-width: 96px; }
+.rail button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
+.rail button[aria-pressed="true"] { background: var(--gilt); border-color: var(--gilt); color: var(--surface); }
+.stage.line canvas { cursor: ew-resize; }
+.chordtag {
+  position: absolute; top: 32px; right: 10px; z-index: 2; pointer-events: none;
+  max-width: calc(100% - 72px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 .8rem var(--mono); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--gilt); border-radius: 4px; padding: 3px 8px;
+}
+.chordtag span { color: var(--muted); margin-right: 6px; }
+.chordtag .name { color: var(--gilt); margin-right: 8px; }
+.singtag { top: 62px; pointer-events: auto; cursor: pointer; }
+.singtag span:not(:first-child) { margin-left: 8px; }
+.singtag.waiting { background: var(--gilt); color: var(--surface); }
+.singtag.waiting span, .singtag.waiting .name { color: var(--surface); }
+label.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.ctl { font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ctl output { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--ink); font-variant-numeric: tabular-nums; display: inline-block; min-width: 4.5ch; }
+input[type="range"] { accent-color: var(--gilt); width: 120px; }
+input[type="checkbox"] { accent-color: var(--gilt); }
+.spacer { flex: 1 1 0; }
+select, input[type="number"] {
+  font: 500 .9rem var(--body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px;
+}
+input[type="number"] { width: 5.5em; font-family: var(--mono); }
+select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
+.mini {
+  display: block; width: 100%; height: 52px; margin-top: -6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  cursor: pointer; touch-action: pan-y;
+}
+/* A finger can slide along the keys for a glissando; a vertical swipe still scrolls the page. */
+.piano {
+  display: block; width: 100%; height: 96px; margin-top: -6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  cursor: pointer; touch-action: pan-y;
+}
+.piano[hidden], .guitar[hidden] { display: none; }
+@media (max-width: 600px) { .piano { height: 72px; } }
+.guitar { display: grid; gap: 4px; }
+.fbhead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 30px; }
+.fbhead .tune { font-family: var(--mono); font-size: .8rem; color: var(--muted); }
+.fret {
+  display: block; width: 100%; height: 124px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  cursor: pointer; touch-action: pan-y;
+}
+@media (max-width: 600px) { .fret { height: 108px; } }
+
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px 32px; color: var(--muted); font-size: .95rem; }
+.notes > div { min-width: 0; max-width: 62ch; }
+.notes h2 { font-family: var(--display); font-weight: 400; font-size: 1.3rem; color: var(--ink); margin: 0 0 4px; }
+.notes p { margin: 0 0 8px; }
+.notes a { color: var(--gilt); }
+.notes kbd { font-family: var(--mono); font-size: .8rem; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; color: var(--ink); }
+.source { font-family: var(--mono); font-size: .8rem; color: var(--ink); }
+.err { color: var(--err); }
+@media (prefers-reduced-motion: reduce) { .chip, .unlock { transition: none; } }

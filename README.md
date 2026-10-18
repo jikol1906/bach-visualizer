@@ -29,6 +29,21 @@ MIDI files rarely mark an upbeat. If the first note isn't on a barline, the app 
 - The **overview strip** under the lane shows the whole movement; click or drag on it to jump. Gold flags mark big tempo or metre changes (like the Ouverture's fast fugue). **Go to bar** jumps to a bar number
 - Speed, zoom, volume, loop, **reverb** amount and **space** (Room, Hall, Church) are in the control rail
 
+## Code
+
+No build step: the browser loads `src/main.js` as an ES module, and it imports the rest.
+
+- `index.html`, `styles.css`: the page
+- `src/main.js`: everything that touches the page, the canvas or Web Audio (being split up further)
+- Pure logic, no DOM, each with unit tests:
+  - `src/midi.js`: the MIDI reader, with bars and pickup detection
+  - `src/time.js`: the tempo map (beats ↔ seconds), finding notes and bars
+  - `src/chords.js`: which notes the held chord sustains, and the chord's name
+  - `src/pitch.js`: pitch detection for Sing mode (YIN)
+  - `src/fingering.js`: which string and fret each note goes on
+  - `src/notes.js`: note names and lengths
+  - `src/movements.js`: the pieces the app ships with
+
 ## Tests
 
 `package.json` holds development tools only; the site itself doesn't need Node.
@@ -37,7 +52,11 @@ MIDI files rarely mark an upbeat. If the first note isn't on a barline, the app 
 npm install
 npx playwright install chromium   # once
 npm test                          # everything
+npm run test:unit                 # unit tests only (Vitest), in a second
 npm run test:e2e                  # browser tests only (Playwright)
 ```
 
-The browser tests in `tests/e2e/` drive the app the way a person would and check only what's on the page (readouts, buttons, pixels), so they keep passing however the code underneath is organised. Sing mode is tested with Chromium's fake microphone, fed with tones the tests generate (`tests/e2e/wav.js`). Tonal is served from `node_modules` during tests, so chord names don't depend on the network. GitHub Actions runs everything on every pull request.
+- **Unit tests** (`tests/unit/`) check the pure modules: the parser against all eight shipped files and against MIDI files built in memory for edge cases (`tests/unit/smf.js`), the tempo maths, chord names (with the real Tonal), pitch detection on synthesized voices, and guitar fingering. A few known weaknesses are written down as tests marked `it.fails`: when one starts passing, it's been fixed.
+- **Browser tests** (`tests/e2e/`) drive the app the way a person would and check only what's on the page (readouts, buttons, pixels), so they keep passing however the code underneath is organised. Sing mode is tested with Chromium's fake microphone, fed with tones the tests generate (`tests/e2e/wav.js`). Tonal is served from `node_modules` during tests, so chord names don't depend on the network.
+
+GitHub Actions runs everything on every pull request.
