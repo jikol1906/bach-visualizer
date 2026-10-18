@@ -1,0 +1,17 @@
+{
+  "name": "bach-visualizer",
+  "private": true,
+  "type": "module",
+  "description": "Development tools only: the site itself is static and needs no build.",
+  "scripts": {
+    "serve": "node tests/serve.js",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "tonal": "6.4.3",
+    "vitest": "5.0.5"
+  }
+}
