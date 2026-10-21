@@ -254,6 +254,24 @@ test.describe("hold chord", () => {
     await expect(page.locator("#rdChordBox")).toBeHidden();
   });
 
+  test("every Sound plays and holds a chord, and the choice is remembered", async ({ page }) => {
+    await open(page);
+    await expect(page.locator("#sound")).toHaveValue("orchestra");
+    await page.click("#hold");
+    for (const s of ["organ", "harpsichord", "epiano", "chip", "pad", "orchestra", "organ"]) {
+      await page.selectOption("#sound", s);
+      await goToBar(page, 2);
+      await expect(page.locator("#rdChordName")).toHaveText("Bm");
+      await page.click("#hold");
+      await page.click("#play");
+      await page.waitForTimeout(300);
+      await page.click("#play");
+      await page.click("#hold");
+    }
+    await page.reload();
+    await expect(page.locator("#sound")).toHaveValue("organ");
+  });
+
   test("the Arp and Reverb sliders show their values", async ({ page }) => {
     await open(page);
     await page.locator("#arpRate").fill("10");

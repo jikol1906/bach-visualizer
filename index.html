@@ -260,6 +260,16 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     </div>
     <label class="group ctl" for="tempo">Speed <input id="tempo" type="range" min="25" max="200" step="5" value="100"><output id="tempoOut">100%</output></label>
     <label class="group ctl" for="zoom">Zoom <input id="zoom" type="range" min="50" max="340" value="150"></label>
+    <label class="group ctl" for="sound" title="What every voice plays on">Sound
+      <select id="sound">
+        <option value="orchestra" selected>Flute &amp; strings</option>
+        <option value="organ">Organ</option>
+        <option value="harpsichord">Harpsichord</option>
+        <option value="epiano">Electric piano</option>
+        <option value="chip">Chiptune</option>
+        <option value="pad">Synth pad</option>
+      </select>
+    </label>
     <label class="group ctl" for="vol">Volume <input id="vol" type="range" min="0" max="100" value="70"></label>
     <label class="group ctl" for="loop"><input id="loop" type="checkbox" checked> Loop</label>
     <label class="group ctl" for="rev">Reverb <input id="rev" type="range" min="0" max="100" value="32"><output id="revOut">32%</output></label>
@@ -557,7 +567,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     $("srcErr").textContent = "";
   }
 
-  // ---------- Audio: a breathy flute and a bowed string voice ----------
+  // ---------- Audio: a breathy flute and a bowed string voice, or one of the synths in the Sound menu ----------
   let ctx = null, master = null, heldBus = null, duck = null, noiseBuf = null, rev = null, wet = null;
   const revAmount = () => Number($("rev").value) / 100;
 
@@ -643,13 +653,27 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     ducked = false; lastChordSize = 0;
   }
 
+  // The Sound menu: "orchestra" keeps each voice's own flute or string sound; the others play every voice on
+  // one synth. decay (seconds, at middle C) makes a plucked or struck note die away instead of sustaining;
+  // vib is the vibrato depth in cents.
+  const SYNTHS = {
+    organ: { atk: 0.012, rel: 0.07, peak: 0.075, vib: 0 },
+    harpsichord: { atk: 0.003, rel: 0.1, peak: 0.22, vib: 0, decay: 0.9 },
+    epiano: { atk: 0.004, rel: 0.25, peak: 0.1, vib: 0, decay: 1.4 },
+    chip: { atk: 0.004, rel: 0.03, peak: 0.08, vib: 10 },
+    pad: { atk: 0.22, rel: 0.45, peak: 0.2, vib: 6 },
+  };
+  const soundKind = () => $("sound").value;
+
   // dur = Infinity makes a held voice: it sustains until release() is called on what this returns.
   function voice(midi, when, dur, vel = 0.8, kind = "wind", tr = null, dest = null) {
     if (!ctx) return null;
+    if (soundKind() !== "orchestra") kind = soundKind();
     const f = 440 * 2 ** ((midi - 69) / 12);
-    const wind = kind === "wind", held = dur === Infinity;
-    const d = Math.max(dur * 0.92, 0.06), atk = wind ? 0.025 : held ? 0.12 : 0.05, rel = wind ? 0.08 : 0.16;
-    const peak = (wind ? 0.2 : 0.07) * vel;
+    const wind = kind === "wind", held = dur === Infinity, syn = SYNTHS[kind];
+    const d = Math.max(dur * 0.92, 0.06);
+    const atk = syn ? syn.atk : wind ? 0.025 : held ? 0.12 : 0.05, rel = syn ? syn.rel : wind ? 0.08 : 0.16;
+    const peak = (syn ? syn.peak : wind ? 0.2 : 0.07) * vel;
     // Every node made for this note is listed, so all of them can be disconnected once it has ended.
     // A stopped node that is still connected to a live bus is never freed: without this, each note left
     // ~20 dead nodes behind, and after a few minutes the audio thread glitched and the page lagged.
@@ -657,7 +681,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const g = mk(ctx.createGain());
     g.gain.setValueAtTime(0, when);
     g.gain.linearRampToValueAtTime(peak, when + atk);
-    if (held) g.gain.linearRampToValueAtTime(peak * 0.8, when + atk + 0.15);
+    if (syn && syn.decay) {
+      // Plucked and struck: low notes ring longer. A held chord settles on a quiet floor so it stays audible.
+      g.gain.setTargetAtTime(held ? peak * 0.22 : 0, when + atk, syn.decay * Math.min(2.2, Math.sqrt(262 / f)) / 3);
+      if (!held) g.gain.setTargetAtTime(0, when + Math.max(atk + 0.01, d), rel / 5);
+    } else if (held) g.gain.linearRampToValueAtTime(peak * 0.8, when + atk + 0.15);
     else {
       g.gain.linearRampToValueAtTime(peak * 0.8, when + Math.max(atk + 0.01, d));
       g.gain.linearRampToValueAtTime(0, when + d + rel);
@@ -672,11 +700,52 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const lfo = mk(ctx.createOscillator()), lfoG = mk(ctx.createGain());
     lfo.frequency.value = wind ? 5.3 : 5.6;
     lfoG.gain.setValueAtTime(0, when);
-    lfoG.gain.linearRampToValueAtTime(wind ? 14 : 9, when + 0.35);
+    lfoG.gain.linearRampToValueAtTime(syn ? syn.vib : wind ? 14 : 9, when + 0.35);
     lfo.connect(lfoG);
     const nodes = [lfo];
+    const osc = (type, freq, amp, to) => {
+      const o = mk(ctx.createOscillator()), og = mk(ctx.createGain());
+      o.type = type; o.frequency.value = freq; og.gain.value = amp;
+      lfoG.connect(o.detune);
+      o.connect(og).connect(to);
+      nodes.push(o);
+      return o;
+    };
 
-    if (wind) {
+    if (kind === "organ") {
+      // Drawbars: a sub-octave and the first few harmonics, all sine, steady as a pipe.
+      for (const [mult, amp] of [[0.5, 0.4], [1, 1], [2, 0.65], [3, 0.3], [4, 0.35], [6, 0.12], [8, 0.15]])
+        if (f * mult < 12000) osc("sine", f * mult, amp, g);
+    } else if (kind === "harpsichord") {
+      // An 8' and a 4' string through a filter that snaps shut after the pluck.
+      const hp = mk(ctx.createBiquadFilter()), lp = mk(ctx.createBiquadFilter());
+      hp.type = "highpass"; hp.frequency.value = f * 0.6;
+      lp.type = "lowpass"; lp.Q.value = 1.5;
+      lp.frequency.setValueAtTime(Math.min(f * 16, 14000), when);
+      lp.frequency.setTargetAtTime(Math.min(f * 4, 8000), when + 0.005, 0.2);
+      hp.connect(lp).connect(g);
+      osc("sawtooth", f, 0.6, hp);
+      osc("square", f * 2, 0.25, hp).detune.value = 4;
+    } else if (kind === "epiano") {
+      // Two-operator FM: a sine modulated at its own pitch, bright on the strike and mellowing as it rings.
+      const c = osc("sine", f, 1, g);
+      const m = mk(ctx.createOscillator()), mg = mk(ctx.createGain());
+      m.frequency.value = f; m.connect(mg).connect(c.frequency);
+      mg.gain.setValueAtTime(f * (1 + 2 * vel), when);
+      mg.gain.setTargetAtTime(f * 0.25, when + 0.005, 0.3);
+      nodes.push(m);
+      osc("sine", f * 4, 0.04, g);   // a little tine on top
+    } else if (kind === "chip") {
+      osc("square", f, 1, g);
+    } else if (kind === "pad") {
+      // Three detuned saws behind a filter that opens slowly.
+      const lp = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.Q.value = 0.8;
+      lp.frequency.setValueAtTime(f * 1.5, when);
+      lp.frequency.linearRampToValueAtTime(Math.min(f * 5, 9000), when + 0.6);
+      lp.connect(g);
+      for (const det of [-12, 0, 12]) osc("sawtooth", f, 0.33, lp).detune.value = det;
+    } else if (wind) {
       for (const [mult, amp] of [[1, 1], [2, 0.22], [3, 0.07]]) {
         const o = mk(ctx.createOscillator()), og = mk(ctx.createGain());
         o.type = "sine"; o.frequency.value = f * mult; og.gain.value = amp;
@@ -737,7 +806,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       // The breath noise is a one-second buffer, so let it play out once; the tones run until release.
       for (const node of nodes) node.start(when);
       if (wind) nodes[nodes.length - 1].stop(when + 0.2);
-      v.release = (at = ctx.currentTime, fade = wind ? 0.15 : 0.22) => {
+      v.release = (at = ctx.currentTime, fade = syn ? Math.max(syn.rel, 0.1) : wind ? 0.15 : 0.22) => {
         rg.gain.setValueAtTime(1, at);
         rg.gain.linearRampToValueAtTime(0, at + fade);
         for (const node of nodes) try { node.stop(at + fade + 0.02); } catch (e) { /* already stopped */ }
@@ -1860,6 +1929,13 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   });
   $("room").addEventListener("change", e => {
     if (rev) rev.buffer = makeIR(Number(e.target.value));
+  });
+  // The sound is remembered on this device. A held chord is struck again so you hear the new sound at once.
+  try { const s = localStorage.getItem("bv.sound"); if (s && s in SYNTHS) $("sound").value = s; } catch (e) { /* storage unavailable */ }
+  $("sound").addEventListener("change", e => {
+    try { localStorage.setItem("bv.sound", e.target.value); } catch (err) { /* storage unavailable */ }
+    if (heldVoices.size) { releaseHeld(); updateChord(); }
+    e.target.blur();   // so Space and the arrows go back to the transport
   });
   $("goForm").addEventListener("submit", e => {
     e.preventDefault();

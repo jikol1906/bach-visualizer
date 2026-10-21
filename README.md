@@ -8,11 +8,11 @@ It's a static site: `index.html` plus the MIDI files in `midi/`, with no build s
 
 The app ships with all seven movements, as MIDI files in `midi/`, from John Hamm's 1995 General MIDI sequence of the Orchestral Suites: Ouverture, Rondeau, Sarabande, Bourrée I & II, Polonaise & Double, Menuet and Badinerie. Each has five parts: flute, violin I, violin II, viola and cello (continuo). All repeats are played, and Hamm added a few ornaments of his own. Pick a movement from the tabs, or link to one directly with `#ouverture`, `#rondeau`, `#sarabande`, `#bourree`, `#polonaise`, `#menuet` or `#badinerie` (the fugue below has its own `#fugue`).
 
-There's also a tab for the **Great Fugue** from the Fantasia and Fugue in G minor, BWV 542 (`midi/fugue.mid`, link `#fugue`). It comes from the [Mutopia Project](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=984)'s LilyPond engraving of the organ piece, so its voices are the two hands and the pedal, not the fugue's four voices. The source file also had octave-coupler tracks (the same notes again an octave up or down), which were left out. It plays on the app's bowed-string sound, not an organ. Only the Fugue is included, not the Fantasia.
+There's also a tab for the **Great Fugue** from the Fantasia and Fugue in G minor, BWV 542 (`midi/fugue.mid`, link `#fugue`). It comes from the [Mutopia Project](https://www.mutopiaproject.org/cgibin/piece-info.cgi?id=984)'s LilyPond engraving of the organ piece, so its voices are the two hands and the pedal, not the fugue's four voices. The source file also had octave-coupler tracks (the same notes again an octave up or down), which were left out. By default it plays on the app's bowed-string sound; pick **Organ** under **Sound** to hear it on something closer to the real thing. Only the Fugue is included, not the Fantasia.
 
 Playback follows each file's tempo map (the Ouverture's fast section, the closing ritardandos) and time-signature changes. The speed slider scales all of it.
 
-Each voice gets its own colour and its own sound (a breathy flute, or a bowed string). Click a voice chip to hide and mute it, or the ◎ next to it to put that voice in the spotlight: the others keep playing at about a third of the level and fade back in the picture.
+Each voice gets its own colour and its own sound (a breathy flute, or a bowed string). The **Sound** menu swaps that for one synth across all voices instead: Organ, Harpsichord, Electric piano, Chiptune or Synth pad. The choice is remembered on this device. Click a voice chip to hide and mute it, or the ◎ next to it to put that voice in the spotlight: the others keep playing at about a third of the level and fade back in the picture.
 
 You can load any other MIDI file with **Load MIDI…** or by dragging it onto the lane. Each track becomes a voice. Tracks that share a name and channel are merged, because some files split the repeats across separate tracks.
 
@@ -27,7 +27,7 @@ MIDI files rarely mark an upbeat. If the first note isn't on a barline, the app 
 - Two **guitar fretboards** under the keyboard show the same notes: one in standard tuning (E A D G B E), one tuned lower for the bass line (B standard by default, or A standard, or an octave down like a Bass VI). Both keep standard tuning's shape, so chord shapes carry over. Each note goes on one string, near where that voice's hand already is. Press or slide along any fret to play it
 - `Space`: play/pause · `←` `→`: jump a bar · `Home`: back to the start
 - The **overview strip** under the lane shows the whole movement; click or drag on it to jump. Gold flags mark big tempo or metre changes (like the Ouverture's fast fugue). **Go to bar** jumps to a bar number
-- Speed, zoom, volume, loop, **reverb** amount and **space** (Room, Hall, Church) are in the control rail
+- **Sound** (Flute & strings, Organ, Harpsichord, Electric piano, Chiptune, Synth pad), speed, zoom, volume, loop, **reverb** amount and **space** (Room, Hall, Church) are in the control rail
 
 ## Tests
 
