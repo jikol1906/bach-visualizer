@@ -95,7 +95,13 @@ h1 em { color: var(--gilt); }
 }
 .clearspot:hover { color: var(--ink); border-color: var(--ink); }
 .clearspot[hidden] { display: none; }
-.spot:focus-visible, .chip:focus-visible, .clearspot:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
+.pan {
+  font: 600 .78rem var(--mono); color: var(--muted); background: var(--surface); cursor: pointer;
+  border: 1px solid var(--line); border-left: 0; padding: 0 8px; min-width: 2.4em;
+}
+.pan:hover { color: var(--ink); border-color: var(--c); }
+.pan:not([data-pan="0"]) { color: var(--ink); border-color: var(--c); }
+.pan:focus-visible, .spot:focus-visible, .chip:focus-visible, .clearspot:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
 .stage {
   position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
@@ -297,7 +303,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <section class="notes">
     <div>
       <h2>Playing it</h2>
-      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1 bar</em> and <em>−5 bars</em>), <kbd>Home</kbd> goes back to the start. <em>Piano</em> and <em>Guitar</em> show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
+      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. The <em>C</em> next to each voice pans it: click to send it to the <em>L</em>eft or <em>R</em>ight ear only, then back to the centre. With headphones, put two voices in opposite ears to hear each line on its own. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1 bar</em> and <em>−5 bars</em>), <kbd>Home</kbd> goes back to the start. <em>Piano</em> and <em>Guitar</em> show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
       <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
       <p>To sing along, pick a voice, turn on <em>Sing</em> and allow the microphone. The music starts a bar before that voice's next note and plays on without it, in time. Sing its notes, in any octave: your pitch is drawn as a line over the score, and every note you hit in time gets a gold bar underneath. Miss one and the music stops on it, holds the harmony and plays the note for you; it carries on as soon as you sing it (<kbd>Space</kbd> skips it). Notes too quick to sing at the current speed never stop the music, so slow down with <em>Speed</em> to be asked for more of them. <em>Guide</em> plays your voice softly along with you. Use headphones, or the microphone will hear the speakers. <kbd>H</kbd> or a tap on the tag plays the next note.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
@@ -508,7 +514,18 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
         if (!tr.on) { tr.on = true; b.setAttribute("aria-pressed", "true"); rebuild(); if (playing) { const at = beatNow(); stopAll(); anchor(at); } }
         setSpotlight(tr, !spot.has(tr));
       });
-      wrap.append(b, sp);
+      const pn = document.createElement("button");
+      pn.type = "button"; pn.className = "pan";
+      const showPan = () => {
+        const side = PAN_NAMES[tr.pan];
+        pn.dataset.pan = String(tr.pan);
+        pn.textContent = side[0];
+        pn.setAttribute("aria-label", `${tr.name}: ${side}. Click to change.`);
+        pn.title = `${tr.name} plays ${side === "Centre" ? "in both ears" : "in the " + side.toLowerCase() + " ear only"}. Click for centre, left, right.`;
+      };
+      showPan();
+      pn.addEventListener("click", () => { setPan(tr, PAN_NEXT[tr.pan]); showPan(); });
+      wrap.append(b, pn, sp);
       box.append(wrap);
     });
   }
@@ -526,10 +543,21 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     $("rdLeadName").textContent = song.tracks[leadIdx].name;
     miniDirty = true;
   }
-  // Each voice reaches the mix through its own gain, one for played notes and one for held chords.
+  // Pan: each voice can sit in the centre or hard in one ear (headphones make it easy to follow one line).
+  const PAN_NAMES = { "0": "Centre", "-1": "Left", "1": "Right" };
+  const PAN_NEXT = { "0": -1, "-1": 1, "1": 0 };
+  function setPan(tr, p) {
+    tr.pan = p;
+    if (ctx) for (const k of ["panner", "hpanner"]) if (tr[k]) tr[k].pan.setTargetAtTime(p, ctx.currentTime, 0.02);
+  }
+  // Each voice reaches the mix through its own gain and panner, one pair for played notes and one for held chords.
   function busFor(tr, held) {
-    const k = held ? "hbus" : "bus";
-    if (!tr[k]) { tr[k] = ctx.createGain(); tr[k].gain.value = focusGain(tr); tr[k].connect(held ? heldBus : master); }
+    const k = held ? "hbus" : "bus", pk = held ? "hpanner" : "panner";
+    if (!tr[k]) {
+      tr[k] = ctx.createGain(); tr[k].gain.value = focusGain(tr);
+      tr[pk] = ctx.createStereoPanner(); tr[pk].pan.value = tr.pan || 0;
+      tr[k].connect(tr[pk]).connect(held ? heldBus : master);
+    }
     return tr[k];
   }
 
@@ -545,6 +573,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     let c = isFlute(s.tracks[0]) ? 1 : 0;
     s.tracks.forEach((tr, i) => {
       tr.on = true;
+      tr.pan = 0;
       tr.color = i === 0 && isFlute(tr) ? 0 : (c++ % 6);
       tr.kind = isWind(tr) ? "wind" : "string";
       let overlaps = 0;
@@ -649,7 +678,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     ctx.onstatechange = null;
     try { ctx.close().catch(() => {}); } catch (e) { /* already closed */ }
     ctx = null;
-    if (song) for (const t of song.tracks) t.bus = t.hbus = null;
+    if (song) for (const t of song.tracks) t.bus = t.hbus = t.panner = t.hpanner = null;
     ducked = false; lastChordSize = 0;
   }
 
