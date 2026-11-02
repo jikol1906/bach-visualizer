@@ -199,6 +199,24 @@ test.describe("voices", () => {
     await expect(spots.nth(1)).toHaveAttribute("aria-pressed", "false");
   });
 
+  test("pan cycles a voice through centre, left and right, and playing still works", async ({ page }) => {
+    await open(page);
+    const pans = page.locator("#voices .pan");
+    await expect(pans).toHaveText(["C", "C", "C", "C", "C"]);
+    await pans.nth(0).click();
+    await expect(pans.nth(0)).toHaveText("L");
+    await pans.nth(4).click();
+    await pans.nth(4).click();
+    await expect(pans.nth(4)).toHaveText("R");
+    await page.click("#play");
+    await expect(page.locator("#play")).toHaveText("Pause");
+    await pans.nth(0).click();   // changed while playing
+    await expect(pans.nth(0)).toHaveText("R");
+    await pans.nth(0).click();
+    await expect(pans.nth(0)).toHaveText("C");
+    await page.click("#play");
+  });
+
   test("spotlighting a hidden voice turns it back on", async ({ page }) => {
     await open(page);
     await page.locator("#voices .chip").nth(2).click();
