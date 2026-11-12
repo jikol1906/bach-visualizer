@@ -157,6 +157,8 @@ h1 em { color: var(--gilt); }
 .panel h3 { font: 400 1.05rem var(--display); color: var(--ink); margin: 0 0 6px; }
 .panel .rows { display: grid; gap: 8px; justify-items: start; }
 .panel .rail { gap: 8px; }
+.panel .mix { font: 500 .78rem var(--mono); color: var(--muted); margin: -2px 0 0; max-width: 34ch; }
+.panel .mix[hidden] { display: none; }
 .stage.line canvas { cursor: ew-resize; }
 .chordtag {
   position: absolute; top: 32px; right: 10px; z-index: 2; pointer-events: none;
@@ -341,16 +343,34 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <div>
       <h3>Sound</h3>
       <div class="rows">
-        <label class="group ctl" for="sound" title="What every voice plays on">Sound
-          <select id="sound">
-            <option value="orchestra" selected>Flute &amp; strings</option>
-            <option value="organ">Organ</option>
-            <option value="harpsichord">Harpsichord</option>
-            <option value="epiano">Electric piano</option>
-            <option value="chip">Chiptune</option>
-            <option value="pad">Synth pad</option>
-          </select>
-        </label>
+        <div class="group rail">
+          <label class="group ctl" for="sound" title="What the voices play on">Sound
+            <select id="sound">
+              <optgroup label="Each voice its own">
+                <option value="orchestra" selected>Flute &amp; strings</option>
+                <option value="random">Random mix</option>
+              </optgroup>
+              <optgroup label="All on one">
+                <option value="organ">Organ</option>
+                <option value="harpsichord">Harpsichord</option>
+                <option value="piano">Piano</option>
+                <option value="lute">Lute</option>
+                <option value="epiano">Electric piano</option>
+                <option value="marimba">Marimba</option>
+                <option value="vibes">Vibraphone</option>
+                <option value="musicbox">Music box</option>
+                <option value="clarinet">Clarinet</option>
+                <option value="oboe">Oboe</option>
+                <option value="brass">Brass</option>
+                <option value="choir">Choir</option>
+                <option value="chip">Chiptune</option>
+                <option value="pad">Synth pad</option>
+              </optgroup>
+            </select>
+          </label>
+          <button id="shuffle" type="button" title="Deal every voice a random instrument">Shuffle</button>
+        </div>
+        <p class="mix" id="mixNote" hidden></p>
         <label class="group ctl" for="vol">Volume <input id="vol" type="range" min="0" max="100" value="70"></label>
         <label class="group ctl" for="rev">Reverb <input id="rev" type="range" min="0" max="100" value="32"><output id="revOut">32%</output></label>
         <label class="group ctl" for="room">Space
@@ -388,7 +408,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <section class="notes">
     <div>
       <h2>Playing it</h2>
-      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. The <em>C</em> next to each voice pans it: click to send it to the <em>L</em>eft or <em>R</em>ight ear only, then back to the centre. With headphones, put two voices in opposite ears to hear each line on its own. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1</em> and <em>−5</em>), <kbd>Home</kbd> goes back to the start. Sound, reverb, zoom, <em>Go to bar</em>, looping and <em>Load MIDI</em> are under <em>More</em>, and so are <em>Piano</em> and <em>Guitar</em>, which show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
+      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. The <em>C</em> next to each voice pans it: click to send it to the <em>L</em>eft or <em>R</em>ight ear only, then back to the centre. With headphones, put two voices in opposite ears to hear each line on its own. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1</em> and <em>−5</em>), <kbd>Home</kbd> goes back to the start. Sound (a dozen instruments, or <em>Shuffle</em> to deal every voice a random one), reverb, zoom, <em>Go to bar</em>, looping and <em>Load MIDI</em> are under <em>More</em>, and so are <em>Piano</em> and <em>Guitar</em>, which show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
       <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>), which appears next to it, switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
       <p>To sing along, turn on <em>Sing</em>, allow the microphone and pick your <em>Voice</em>. The music starts a bar before that voice's next note and plays on without it, in time. Sing its notes, in any octave: your pitch is drawn as a line over the score, and every note you hit in time gets a gold bar underneath. Miss one and the music stops on it, holds the harmony and plays the note for you; it carries on as soon as you sing it (<kbd>Space</kbd> skips it). Notes too quick to sing at the current speed never stop the music, so slow down with <em>Speed</em> to be asked for more of them. <em>Guide</em> plays your voice softly along with you. Use headphones, or the microphone will hear the speakers. <kbd>H</kbd> or a tap on the tag plays the next note. The tag also counts your streak of notes in a row. Sing a voice from its first note to the end and you get a result: one star for finishing, two for 80% of the notes in time, three for 95%. Your best run of each voice is kept on this device and shown as stars on its chip.</p>
       <p>To learn a line by heart, turn on <em>Fill in</em> and pick your <em>Voice</em>. Some of its notes go missing: they aren't drawn and they aren't played, and neither is any note of another voice that doubles them. A gold band with a question mark shows when a missing note falls, but not where. The music stops there and waits; play the note on the keyboard, in any octave. A wrong key is marked red, and after three the note is given away (<kbd>Space</kbd> gives it away at once). Notes the line itself gives away are never the missing ones: a repeated note, the middle of a scale run, a neighbour note. <em>Blanks</em> sets how many go missing, from <em>Few</em> to <em>All</em>, and every run draws new ones. A run from the beginning to the end is scored like a sung one, by the blanks you got at the first try.</p>
@@ -679,6 +699,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     endBeat = Math.max(...all.map(n => n.start + n.dur));
     rebuild();
     renderChips();
+    dealInstruments();
     seek(startBeat - 0.25);
     fillSingVoices();   // with Sing on, this starts a run on the new piece
     $("rdLeadName").textContent = song.tracks[0].name;
@@ -778,16 +799,44 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   const SYNTHS = {
     organ: { atk: 0.012, rel: 0.07, peak: 0.075, vib: 0 },
     harpsichord: { atk: 0.003, rel: 0.1, peak: 0.22, vib: 0, decay: 0.9 },
+    piano: { atk: 0.003, rel: 0.2, peak: 0.12, vib: 0, decay: 1.7 },
+    lute: { atk: 0.002, rel: 0.12, peak: 0.155, vib: 0, decay: 0.7 },
     epiano: { atk: 0.004, rel: 0.25, peak: 0.1, vib: 0, decay: 1.4 },
+    marimba: { atk: 0.002, rel: 0.08, peak: 0.16, vib: 0, decay: 0.4 },
+    vibes: { atk: 0.004, rel: 0.3, peak: 0.11, vib: 0, decay: 2.4 },
+    musicbox: { atk: 0.002, rel: 0.2, peak: 0.105, vib: 0, decay: 1.1 },
+    clarinet: { atk: 0.03, rel: 0.08, peak: 0.1, vib: 4 },
+    oboe: { atk: 0.025, rel: 0.08, peak: 0.11, vib: 8 },
+    brass: { atk: 0.05, rel: 0.12, peak: 0.18, vib: 5 },
+    choir: { atk: 0.12, rel: 0.3, peak: 0.24, vib: 12 },
     chip: { atk: 0.004, rel: 0.03, peak: 0.08, vib: 10 },
     pad: { atk: 0.22, rel: 0.45, peak: 0.2, vib: 6 },
   };
   const soundKind = () => $("sound").value;
+  const KIND_NAMES = {
+    wind: "Flute", string: "Strings", organ: "Organ", harpsichord: "Harpsichord", piano: "Piano", lute: "Lute",
+    epiano: "Electric piano", marimba: "Marimba", vibes: "Vibraphone", musicbox: "Music box", clarinet: "Clarinet",
+    oboe: "Oboe", brass: "Brass", choir: "Choir", chip: "Chiptune", pad: "Synth pad",
+  };
+  // "orchestra" is each voice's own flute or strings, "random" the instrument it was dealt, anything else one
+  // instrument for all.
+  const kindOf = tr => { const k = soundKind(); return k === "orchestra" ? (tr ? tr.kind : "wind") : k === "random" ? (tr && tr.inst) || "wind" : k; };
+  // Deal every voice an instrument, no two alike while there are enough to go round.
+  function dealInstruments() {
+    const pool = Object.keys(KIND_NAMES);
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    song.tracks.forEach((tr, i) => { tr.inst = pool[i % pool.length]; });
+    showMix();
+  }
+  function showMix() {
+    const on = soundKind() === "random" && !!song;
+    $("mixNote").hidden = !on;
+    $("mixNote").textContent = on ? song.tracks.map(tr => `${tr.name}: ${KIND_NAMES[tr.inst]}`).join(" · ") : "";
+  }
 
   // dur = Infinity makes a held voice: it sustains until release() is called on what this returns.
   function voice(midi, when, dur, vel = 0.8, kind = "wind", tr = null, dest = null) {
     if (!ctx) return null;
-    if (soundKind() !== "orchestra") kind = soundKind();
     const f = 440 * 2 ** ((midi - 69) / 12);
     const wind = kind === "wind", held = dur === Infinity, syn = SYNTHS[kind];
     const d = Math.max(dur * 0.92, 0.06);
@@ -854,6 +903,83 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       mg.gain.setTargetAtTime(f * 0.25, when + 0.005, 0.3);
       nodes.push(m);
       osc("sine", f * 4, 0.04, g);   // a little tine on top
+    } else if (kind === "piano") {
+      // A struck string: bright at the hammer, then the filter closes as it rings. Two strings a hair apart.
+      const lp = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.Q.value = 0.7;
+      lp.frequency.setValueAtTime(Math.min(f * (6 + 8 * vel), 13000), when);
+      lp.frequency.setTargetAtTime(Math.min(f * 2.5, 6000), when + 0.005, 0.35);
+      lp.connect(g);
+      osc("triangle", f, 0.75, lp);
+      osc("sawtooth", f, 0.22, lp).detune.value = 3;
+      osc("sawtooth", f, 0.22, lp).detune.value = -3;
+      osc("sine", f * 2, 0.12, lp);
+    } else if (kind === "lute") {
+      // A gut string plucked with the finger: rounder than the harpsichord's quill, and gone sooner.
+      const lp = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.Q.value = 1;
+      lp.frequency.setValueAtTime(Math.min(f * 9, 11000), when);
+      lp.frequency.setTargetAtTime(Math.min(f * 2, 5000), when + 0.004, 0.09);
+      lp.connect(g);
+      osc("triangle", f, 0.8, lp);
+      osc("sawtooth", f, 0.3, lp);
+    } else if (kind === "marimba" || kind === "musicbox" || kind === "vibes") {
+      // Bars and combs: a pure fundamental, with overtones that die away much sooner than it does. The
+      // vibraphone's motor adds a slow tremolo.
+      const parts = kind === "marimba" ? [[4, 0.3, 0.05], [10, 0.08, 0.02]] : kind === "vibes" ? [[4, 0.18, 0.5], [10, 0.05, 0.08]] : [[4, 0.22, 0.25], [5.4, 0.1, 0.1]];
+      let to = g;
+      if (kind === "vibes") {
+        const tg = mk(ctx.createGain()), tl = mk(ctx.createOscillator()), tlg = mk(ctx.createGain());
+        tg.gain.value = 0.8; tl.frequency.value = 5.2; tlg.gain.value = 0.2;
+        tl.connect(tlg).connect(tg.gain); tg.connect(g);
+        to = tg;
+        nodes.push(tl);
+      }
+      osc("sine", f, 1, to);
+      for (const [mult, amp, tau] of parts) {
+        if (f * mult > 14000) continue;
+        const pg = mk(ctx.createGain());
+        pg.gain.setValueAtTime(1, when); pg.gain.setTargetAtTime(0, when, tau);
+        pg.connect(to);
+        osc("sine", f * mult, amp, pg);
+      }
+    } else if (kind === "clarinet") {
+      // Odd harmonics only (a square), rounded off: hollow and woody.
+      const lp = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.Q.value = 0.7; lp.frequency.value = Math.min(f * 5, 7000);
+      lp.connect(g);
+      osc("square", f, 0.5, lp);
+      osc("sine", f, 0.4, lp);
+    } else if (kind === "oboe") {
+      // A reedy saw with two nasal formants.
+      const lp = mk(ctx.createBiquadFilter()), f1 = mk(ctx.createBiquadFilter()), f2 = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.frequency.value = 6000; lp.Q.value = 0.5;
+      f1.type = "peaking"; f1.frequency.value = 1400; f1.Q.value = 2.5; f1.gain.value = 10;
+      f2.type = "peaking"; f2.frequency.value = 3000; f2.Q.value = 3; f2.gain.value = 7;
+      f1.connect(f2).connect(lp).connect(g);
+      osc("sawtooth", f, 0.8, f1);
+    } else if (kind === "brass") {
+      // Two saws behind a filter that opens with the breath and then settles.
+      const lp = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.Q.value = 1.2;
+      lp.frequency.setValueAtTime(f * 1.5, when);
+      lp.frequency.linearRampToValueAtTime(Math.min(f * (4 + 4 * vel), 7000), when + 0.07);
+      lp.frequency.setTargetAtTime(Math.min(f * 4, 5000), when + 0.07, 0.15);
+      lp.connect(g);
+      osc("sawtooth", f, 0.5, lp).detune.value = -4;
+      osc("sawtooth", f, 0.5, lp).detune.value = 4;
+    } else if (kind === "choir") {
+      // Voices on "ah": detuned saws through three vowel formants.
+      const src = mk(ctx.createGain());
+      for (const [freq, q, amp] of [[700, 5, 1], [1150, 6, 0.6], [2700, 8, 0.3]]) {
+        const bp = mk(ctx.createBiquadFilter()), bg = mk(ctx.createGain());
+        bp.type = "bandpass"; bp.frequency.value = freq; bp.Q.value = q; bg.gain.value = amp;
+        src.connect(bp).connect(bg).connect(g);
+      }
+      const body = mk(ctx.createBiquadFilter());   // some of the fundamental, so low notes keep their pitch
+      body.type = "lowpass"; body.frequency.value = Math.min(f * 2, 2000);
+      src.connect(body).connect(g);
+      for (const det of [-14, -5, 6, 13]) osc("sawtooth", f, 0.25, src).detune.value = det;
     } else if (kind === "chip") {
       osc("square", f, 1, g);
     } else if (kind === "pad") {
@@ -1006,7 +1132,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       const list = arpList();
       const seq = list.length < 2 ? list : list.concat(list.slice(1, -1).reverse());   // up, then down
       const n = seq[arpK++ % seq.length];
-      voice(n.midi, arpNext, Math.min(0.45, step * 2.5), 0.85, n.tr.kind, n.tr);   // shorter notes when fast, to spare the CPU
+      voice(n.midi, arpNext, Math.min(0.45, step * 2.5), 0.85, kindOf(n.tr), n.tr);   // shorter notes when fast, to spare the CPU
       arpShown.push({ t: arpNext, midi: n.midi });
       arpNext += step;
     }
@@ -1126,7 +1252,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   // A reference tone for a note, in the octave nearest to where you've been singing (or a middle one).
   function singGuide(n) {
     if (!ctx || !n) return;
-    voice(Math.round(singLastSung + wrap12(n.midi - singLastSung)), ctx.currentTime + 0.02, 0.6, 0.8, n.tr.kind, n.tr);
+    voice(Math.round(singLastSung + wrap12(n.midi - singLastSung)), ctx.currentTime + 0.02, 0.6, 0.8, kindOf(n.tr), n.tr);
     singGate = ctx.currentTime + 0.8;   // the microphone ignores the tone (and its reverb)
   }
 
@@ -1495,7 +1621,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
     if (audible) {
       let added = false;
-      for (const n of chord) if (!heldVoices.has(n)) { heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), n.tr.kind, n.tr)); added = true; }
+      for (const n of chord) if (!heldVoices.has(n)) { heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), kindOf(n.tr), n.tr)); added = true; }
       if (added || heldVoices.size !== lastChordSize) {
         // Roughly equal loudness whatever the chord size: full level up to 3 notes, then 1/sqrt(n).
         heldBus.gain.setTargetAtTime(Math.min(1, Math.sqrt(3 / Math.max(heldVoices.size, 1))), ctx.currentTime, 0.03);
@@ -1559,7 +1685,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       if (n.hid) continue;
       // While singing, your voice drops out of the backing, or with Guide plays softly under you.
       const vel = singOn && n.tr === singTr ? ($("singGuide").checked ? n.vel * 0.3 : 0) : n.vel;
-      if (vel) voice(n.midi, anchorCtx + (s0 - anchorSec) / speed, (secAt(n.start + n.dur) - s0) / speed, vel, n.tr.kind, n.tr);
+      if (vel) voice(n.midi, anchorCtx + (s0 - anchorSec) / speed, (secAt(n.start + n.dur) - s0) / speed, vel, kindOf(n.tr), n.tr);
     }
     if (beatNow() >= endBeat + 0.25) {
       if (singOn) singFinish();
@@ -1969,7 +2095,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     return null;
   }
 
-  const hearNote = (n, vel) => voice(n.midi, ctx.currentTime + 0.005, Math.min(Math.max((secAt(n.start + n.dur) - secAt(n.start)) / speed, 0.25), 0.8), vel, n.tr.kind);
+  const hearNote = (n, vel) => voice(n.midi, ctx.currentTime + 0.005, Math.min(Math.max((secAt(n.start + n.dur) - secAt(n.start)) / speed, 0.25), 0.8), vel, kindOf(n.tr));
 
   function updateHover(x, y, sound) {
     const n = noteAt(x, y);
@@ -2062,7 +2188,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const where = p => p ? `${p.bd.id}:${p.s}:${p.f}` : "";
     if (cur && cur.midi === m && where(cur.pos) === where(pos)) return;
     if (cur && cur.v) cur.v.release();
-    const kind = song ? song.tracks[leadIdx].kind : "wind";
+    const kind = kindOf(song && song.tracks[leadIdx]);
     pressed.set(id, { midi: m, pos, v: m == null || !ctx ? null : voice(m, ctx.currentTime + 0.005, Infinity, 0.8, kind, null, master) });
   }
   function liftKey(id) {
@@ -2336,11 +2462,22 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (rev) rev.buffer = makeIR(Number(e.target.value));
   });
   // The sound is remembered on this device. A held chord is struck again so you hear the new sound at once.
-  try { const s = localStorage.getItem("bv.sound"); if (s && s in SYNTHS) $("sound").value = s; } catch (e) { /* storage unavailable */ }
-  $("sound").addEventListener("change", e => {
-    try { localStorage.setItem("bv.sound", e.target.value); } catch (err) { /* storage unavailable */ }
+  try { const s = localStorage.getItem("bv.sound"); if (s && (s in SYNTHS || s === "random")) $("sound").value = s; } catch (e) { /* storage unavailable */ }
+  const soundChanged = () => {
+    try { localStorage.setItem("bv.sound", soundKind()); } catch (err) { /* storage unavailable */ }
+    showMix();
     if (heldVoices.size) { releaseHeld(); updateChord(); }
+  };
+  $("sound").addEventListener("change", e => {
+    soundChanged();
     e.target.blur();   // so Space and the arrows go back to the transport
+  });
+  // Shuffle deals again, and switches to the random mix if it wasn't on.
+  $("shuffle").addEventListener("click", () => {
+    if (!song) return;
+    $("sound").value = "random";
+    dealInstruments();
+    soundChanged();
   });
   $("goForm").addEventListener("submit", e => {
     e.preventDefault();

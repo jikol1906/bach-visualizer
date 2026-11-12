@@ -12,7 +12,7 @@ There's also a tab for the **Great Fugue** from the Fantasia and Fugue in G mino
 
 Playback follows each file's tempo map (the Ouverture's fast section, the closing ritardandos) and time-signature changes. The speed slider scales all of it.
 
-Each voice gets its own colour and its own sound (a breathy flute, or a bowed string). The **Sound** menu swaps that for one synth across all voices instead: Organ, Harpsichord, Electric piano, Chiptune or Synth pad. The choice is remembered on this device. Click a voice chip to hide and mute it, or the ◎ next to it to put that voice in the spotlight: the others keep playing at about a third of the level and fade back in the picture.
+Each voice gets its own colour and its own sound (a breathy flute, or a bowed string). The **Sound** menu (under **More**) swaps that for one instrument across all voices instead: Organ, Harpsichord, Piano, Lute, Electric piano, Marimba, Vibraphone, Music box, Clarinet, Oboe, Brass, Choir, Chiptune or Synth pad. All of them are synthesised in the browser, with no samples. **Random mix** deals every voice an instrument of its own, no two alike, and lists who got what under the menu; **Shuffle** deals again. The choice is remembered on this device (a random mix is dealt afresh for each piece). Click a voice chip to hide and mute it, or the ◎ next to it to put that voice in the spotlight: the others keep playing at about a third of the level and fade back in the picture.
 
 You can load any other MIDI file with **Load MIDI…** (under **More**) or by dragging it onto the lane. Each track becomes a voice. Tracks that share a name and channel are merged, because some files split the repeats across separate tracks.
 
@@ -29,7 +29,7 @@ MIDI files rarely mark an upbeat. If the first note isn't on a barline, the app 
 - Two **guitar fretboards** under the keyboard show the same notes: one in standard tuning (E A D G B E), one tuned lower for the bass line (B standard by default, or A standard, or an octave down like a Bass VI). Both keep standard tuning's shape, so chord shapes carry over. Each note goes on one string, near where that voice's hand already is. Press or slide along any fret to play it
 - `Space`: play/pause · `←` `→`: jump a bar · `Home`: back to the start. The rail has Play, back to the start, **−5** and **−1** bars, **Speed**, **Hold chord**, **Sing** and **Fill in**; each mode's own controls (arpeggio, voice, guide, blanks) appear next to them only while it's on
 - The **overview strip** under the lane shows the whole movement; click or drag on it to jump. Gold flags mark big tempo or metre changes (like the Ouverture's fast fugue). **Go to bar** jumps to a bar number
-- Everything else is under **More**: **Sound** (Flute & strings, Organ, Harpsichord, Electric piano, Chiptune, Synth pad), volume, **reverb** amount and **space** (Room, Hall, Church), zoom, **Go to bar**, the **Piano** and **Guitar** toggles, loop and **Load MIDI…**. Whether the panel is open is remembered
+- Everything else is under **More**: **Sound** (Flute & strings, Random mix, or one of fourteen instruments for every voice) and **Shuffle**, volume, **reverb** amount and **space** (Room, Hall, Church), zoom, **Go to bar**, the **Piano** and **Guitar** toggles, loop and **Load MIDI…**. Whether the panel is open is remembered
 
 ## Tests
 
