@@ -145,6 +145,18 @@ h1 em { color: var(--gilt); }
 .rail button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); min-width: 96px; }
 .rail button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
 .rail button[aria-pressed="true"] { background: var(--gilt); border-color: var(--gilt); color: var(--surface); }
+/* The rail holds only what you reach for while the music runs. Everything else lives in the More panel. */
+.rail button.icon { padding: 7px 9px; min-width: 38px; font-family: var(--mono); font-size: .85rem; line-height: 1.35; }
+.rail button.icon svg { display: block; width: 14px; height: 18px; margin: 0 auto; fill: currentColor; }
+.rail .group[hidden], .panel[hidden] { display: none; }
+.rail button.more[aria-expanded="true"] { border-color: var(--gilt); color: var(--gilt); }
+.panel {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 28px; margin-top: -4px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px 14px;
+}
+.panel h3 { font: 400 1.05rem var(--display); color: var(--ink); margin: 0 0 6px; }
+.panel .rows { display: grid; gap: 8px; justify-items: start; }
+.panel .rail { gap: 8px; }
 .stage.line canvas { cursor: ew-resize; }
 .chordtag {
   position: absolute; top: 32px; right: 10px; z-index: 2; pointer-events: none;
@@ -158,6 +170,32 @@ h1 em { color: var(--gilt); }
 .singtag span:not(:first-child) { margin-left: 8px; }
 .singtag.waiting { background: var(--gilt); color: var(--surface); }
 .singtag.waiting span, .singtag.waiting .name { color: var(--surface); }
+.singtag #singStreak { color: var(--gilt); font-weight: 500; }
+.singtag.waiting #singStreak { color: var(--surface); }
+.singtag span:empty { display: none; }
+/* How a sung run went: shown over the lane when the music reaches the end. */
+.result {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 4;
+  width: min(400px, calc(100% - 32px)); text-align: center;
+  background: var(--bg); border: 1px solid var(--gilt); border-radius: 8px; padding: 16px 20px 18px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / .28);
+}
+.result[hidden] { display: none; }
+.result .what { font: italic 400 1rem var(--display); color: var(--muted); margin: 0; }
+.result .stars { font-size: 2.2rem; line-height: 1.2; letter-spacing: .12em; color: var(--gilt-hi); margin: 2px 0; }
+.result .stars .off { color: var(--line); }
+.result .pct { font: 400 2rem var(--display); margin: 0; }
+.result .pct small { font: 500 .8rem var(--mono); color: var(--muted); }
+.result .detail { font: 500 .8rem var(--mono); color: var(--muted); margin: 6px 0 0; }
+.result .best { font: 500 .85rem var(--body); color: var(--gilt); margin: 8px 0 0; min-height: 1.3em; }
+.result .acts { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
+.result button {
+  font: 500 .95rem var(--body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 4px; padding: 7px 16px; cursor: pointer;
+}
+.result button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.chip .stars:empty { display: none; }
+.chip .stars { color: var(--gilt); font-size: .8rem; letter-spacing: .05em; margin-left: -2px; }
 label.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .ctl { font-size: .82rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .ctl output { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--ink); font-variant-numeric: tabular-nums; display: inline-block; min-width: 4.5ch; }
@@ -226,7 +264,15 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <canvas id="cv" aria-label="Scrolling piano roll of every voice. Hover a note to hear it."></canvas>
     <div class="tip" id="tip" hidden></div>
     <div class="chordtag" id="rdChordBox" hidden><span>Chord</span><b class="name" id="rdChordName" hidden></b><b id="rdChord">–</b></div>
-    <div class="chordtag singtag" id="singTag" role="button" tabindex="0" title="Tap to hear the note (H)" hidden><span id="singLabel">Next</span><b class="name" id="singTarget">–</b><span>You</span><b id="singHeard">–</b><span id="singCount"></span></div>
+    <div class="chordtag singtag" id="singTag" role="button" tabindex="0" title="Tap to hear the note (H)" hidden><span id="singLabel">Next</span><b class="name" id="singTarget">–</b><span>You</span><b id="singHeard">–</b><span id="singCount"></span><span id="singStreak"></span></div>
+    <div class="result" id="result" role="dialog" aria-labelledby="resWhat" hidden>
+      <p class="what" id="resWhat"></p>
+      <div class="stars" id="resStars" role="img"></div>
+      <p class="pct"><span id="resPct"></span> <small>in time</small></p>
+      <p class="detail" id="resDetail"></p>
+      <p class="best" id="resBest"></p>
+      <div class="acts"><button class="primary" id="resAgain" type="button">Again</button><button id="resDone" type="button">Done</button></div>
+    </div>
     <button class="unlock" id="unlock" type="button">Click once to turn on sound</button>
   </div>
 
@@ -252,60 +298,81 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <div class="rail">
     <div class="group">
       <button class="primary" id="play" type="button">Play</button>
-      <button id="restart" type="button">Restart</button>
-      <button id="back5" type="button" title="Jump back 5 bars">−5 bars</button>
-      <button id="back1" type="button" title="Jump back 1 bar">−1 bar</button>
-      <button id="hold" type="button" aria-pressed="false" title="While paused, sustain every note under the line">Hold chord</button>
+      <button class="icon" id="restart" type="button" title="Back to the start (Home)" aria-label="Restart"><svg viewBox="0 0 14 18" aria-hidden="true"><rect x="1" y="3" width="2.4" height="12"/><path d="M13 3v12L4.5 9z"/></svg></button>
+      <button class="icon" id="back5" type="button" title="Jump back 5 bars" aria-label="Back 5 bars">−5</button>
+      <button class="icon" id="back1" type="button" title="Jump back 1 bar (←)" aria-label="Back 1 bar">−1</button>
+    </div>
+    <label class="group ctl" for="tempo">Speed <input id="tempo" type="range" min="25" max="200" step="5" value="100"><output id="tempoOut">100%</output></label>
+    <div class="group">
+      <button id="hold" type="button" aria-pressed="false" title="While paused, sustain every note under the line and name the chord">Hold chord</button>
+      <button id="sing" type="button" aria-pressed="false" title="Sing a voice while the others play: the music waits on any note you miss, and a full run earns stars. Needs a microphone, and headphones so it doesn't hear the speakers.">Sing</button>
+    </div>
+    <div class="group" id="holdOpts" hidden>
       <button id="arp" type="button" disabled aria-pressed="false" title="Keep arpeggiating the held chord, up and down (A)">Arpeggio</button>
       <label class="group ctl" for="arpRate" title="Arpeggio speed, in notes per second">Arp <input id="arpRate" type="range" min="2" max="16" step="0.5" value="6"><output id="arpOut">6/s</output></label>
     </div>
-    <div class="group">
-      <button id="sing" type="button" aria-pressed="false" title="Sing a voice while the others play: the music waits on any note you miss. Needs a microphone, and headphones so it doesn't hear the speakers.">Sing</button>
+    <div class="group" id="singOpts" hidden>
       <label class="group ctl" for="singVoice">Voice <select id="singVoice"></select></label>
       <label class="group ctl" for="singGuide" title="Play the voice you're singing softly along with you (headphones only, or the microphone hears it)"><input id="singGuide" type="checkbox"> Guide</label>
     </div>
-    <label class="group ctl" for="tempo">Speed <input id="tempo" type="range" min="25" max="200" step="5" value="100"><output id="tempoOut">100%</output></label>
-    <label class="group ctl" for="zoom">Zoom <input id="zoom" type="range" min="50" max="340" value="150"></label>
-    <label class="group ctl" for="sound" title="What every voice plays on">Sound
-      <select id="sound">
-        <option value="orchestra" selected>Flute &amp; strings</option>
-        <option value="organ">Organ</option>
-        <option value="harpsichord">Harpsichord</option>
-        <option value="epiano">Electric piano</option>
-        <option value="chip">Chiptune</option>
-        <option value="pad">Synth pad</option>
-      </select>
-    </label>
-    <label class="group ctl" for="vol">Volume <input id="vol" type="range" min="0" max="100" value="70"></label>
-    <label class="group ctl" for="loop"><input id="loop" type="checkbox" checked> Loop</label>
-    <label class="group ctl" for="rev">Reverb <input id="rev" type="range" min="0" max="100" value="32"><output id="revOut">32%</output></label>
-    <label class="group ctl" for="room">Space
-      <select id="room">
-        <option value="0.9">Room</option>
-        <option value="2.4" selected>Hall</option>
-        <option value="5">Church</option>
-      </select>
-    </label>
-    <form class="group ctl" id="goForm">
-      <label for="goBar">Go to bar</label>
-      <input id="goBar" type="number" min="1" inputmode="numeric" placeholder="1">
-    </form>
-    <div class="group">
-      <button id="showPiano" type="button" aria-pressed="false" aria-controls="piano">Piano</button>
-      <button id="showGuitar" type="button" aria-pressed="false" aria-controls="guitar">Guitar</button>
-    </div>
     <span class="spacer"></span>
-    <div class="group">
-      <label class="file" for="midi">Load MIDI…<input id="midi" type="file" accept=".mid,.midi,audio/midi"></label>
+    <button class="more" id="more" type="button" aria-expanded="false" aria-controls="panel" title="Sound, view and file settings">More</button>
+  </div>
+
+  <div class="panel" id="panel" hidden>
+    <div>
+      <h3>Sound</h3>
+      <div class="rows">
+        <label class="group ctl" for="sound" title="What every voice plays on">Sound
+          <select id="sound">
+            <option value="orchestra" selected>Flute &amp; strings</option>
+            <option value="organ">Organ</option>
+            <option value="harpsichord">Harpsichord</option>
+            <option value="epiano">Electric piano</option>
+            <option value="chip">Chiptune</option>
+            <option value="pad">Synth pad</option>
+          </select>
+        </label>
+        <label class="group ctl" for="vol">Volume <input id="vol" type="range" min="0" max="100" value="70"></label>
+        <label class="group ctl" for="rev">Reverb <input id="rev" type="range" min="0" max="100" value="32"><output id="revOut">32%</output></label>
+        <label class="group ctl" for="room">Space
+          <select id="room">
+            <option value="0.9">Room</option>
+            <option value="2.4" selected>Hall</option>
+            <option value="5">Church</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div>
+      <h3>View</h3>
+      <div class="rows">
+        <label class="group ctl" for="zoom">Zoom <input id="zoom" type="range" min="50" max="340" value="150"></label>
+        <form class="group ctl" id="goForm">
+          <label for="goBar">Go to bar</label>
+          <input id="goBar" type="number" min="1" inputmode="numeric" placeholder="1">
+        </form>
+        <div class="group rail">
+          <button id="showPiano" type="button" aria-pressed="false" aria-controls="piano">Piano</button>
+          <button id="showGuitar" type="button" aria-pressed="false" aria-controls="guitar">Guitar</button>
+        </div>
+      </div>
+    </div>
+    <div>
+      <h3>Piece</h3>
+      <div class="rows">
+        <label class="group ctl" for="loop"><input id="loop" type="checkbox" checked> Loop at the end</label>
+        <label class="file" for="midi">Load MIDI…<input id="midi" type="file" accept=".mid,.midi,audio/midi"></label>
+      </div>
     </div>
   </div>
 
   <section class="notes">
     <div>
       <h2>Playing it</h2>
-      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. The <em>C</em> next to each voice pans it: click to send it to the <em>L</em>eft or <em>R</em>ight ear only, then back to the centre. With headphones, put two voices in opposite ears to hear each line on its own. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1 bar</em> and <em>−5 bars</em>), <kbd>Home</kbd> goes back to the start. <em>Piano</em> and <em>Guitar</em> show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
-      <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>) switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
-      <p>To sing along, pick a voice, turn on <em>Sing</em> and allow the microphone. The music starts a bar before that voice's next note and plays on without it, in time. Sing its notes, in any octave: your pitch is drawn as a line over the score, and every note you hit in time gets a gold bar underneath. Miss one and the music stops on it, holds the harmony and plays the note for you; it carries on as soon as you sing it (<kbd>Space</kbd> skips it). Notes too quick to sing at the current speed never stop the music, so slow down with <em>Speed</em> to be asked for more of them. <em>Guide</em> plays your voice softly along with you. Use headphones, or the microphone will hear the speakers. <kbd>H</kbd> or a tap on the tag plays the next note.</p>
+      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. The <em>C</em> next to each voice pans it: click to send it to the <em>L</em>eft or <em>R</em>ight ear only, then back to the centre. With headphones, put two voices in opposite ears to hear each line on its own. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1</em> and <em>−5</em>), <kbd>Home</kbd> goes back to the start. Sound, reverb, zoom, <em>Go to bar</em>, looping and <em>Load MIDI</em> are under <em>More</em>, and so are <em>Piano</em> and <em>Guitar</em>, which show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
+      <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>), which appears next to it, switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
+      <p>To sing along, turn on <em>Sing</em>, allow the microphone and pick your <em>Voice</em>. The music starts a bar before that voice's next note and plays on without it, in time. Sing its notes, in any octave: your pitch is drawn as a line over the score, and every note you hit in time gets a gold bar underneath. Miss one and the music stops on it, holds the harmony and plays the note for you; it carries on as soon as you sing it (<kbd>Space</kbd> skips it). Notes too quick to sing at the current speed never stop the music, so slow down with <em>Speed</em> to be asked for more of them. <em>Guide</em> plays your voice softly along with you. Use headphones, or the microphone will hear the speakers. <kbd>H</kbd> or a tap on the tag plays the next note. The tag also counts your streak of notes in a row. Sing a voice from its first note to the end and you get a result: one star for finishing, two for 80% of the notes in time, three for 95%. Your best run of each voice is kept on this device and shown as stars on its chip.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
     <div>
@@ -495,6 +562,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       b.setAttribute("aria-pressed", String(tr.on));
       b.innerHTML = '<span class="dot"></span>';
       b.append(tr.name);
+      tr.starEl = document.createElement("span");
+      tr.starEl.className = "stars";
+      b.append(tr.starEl);
+      showStars(tr);
       b.addEventListener("click", () => {
         if (tr.on && song.tracks.filter(x => x.on).length === 1) return;   // keep at least one voice
         tr.on = !tr.on;
@@ -563,10 +634,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   $("clearSpot").addEventListener("click", () => setSpotlight(null));
 
-  function loadSong(s, label) {
+  function loadSong(s, label, key) {
     stopAll();
     releaseHeld();
-    song = s; song.name = label || s.name;
+    song = s; song.name = label || s.name; song.key = key || song.name;
     // Order voices high to low, the way a score lists them, and give the flute the gilt colour.
     const avg = tr => tr.notes.reduce((a, n) => a + n.midi, 0) / tr.notes.length;
     s.tracks.sort((a, b) => (isFlute(b) - isFlute(a)) || avg(b) - avg(a));
@@ -589,9 +660,9 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     endBeat = Math.max(...all.map(n => n.start + n.dur));
     rebuild();
     renderChips();
-    fillSingVoices();
-    $("rdLeadName").textContent = song.tracks[0].name;
     seek(startBeat - 0.25);
+    fillSingVoices();   // with Sing on, this starts a run on the new piece
+    $("rdLeadName").textContent = song.tracks[0].name;
     $("srcName").textContent = song.name;
     $("srcErr").textContent = "";
   }
@@ -952,6 +1023,24 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   let singIdx = 0, singOkFor = 0, singTickAt = 0, singLastB = 0, singGate = 0, singWaitAt = 0, singGuided = false;
   let singRaw = [], singMiss = 0, singHeard = null, singFolded = null, singLastSung = 62, singScore = { ok: 0, waited: 0 };
   const singTrail = [];   // { b, m, gap }: the sung pitch, drawn over the roll and folded to the octave of the notes
+  // A run: from where Sing started to the end of the piece. One that starts on the voice's first note and isn't
+  // interrupted by jumping about is "full" and earns stars; anything else is practice. The best full run of each
+  // voice of each piece is kept on this device.
+  const SING_MIN_RUN = 8;     // a full run that asked for fewer notes than this (the speed was too high) earns nothing
+  const STREAK_MARKS = new Set([10, 25, 50, 100, 150, 200]);
+  let singRun = null;         // { full, streak, top, missed, done }
+  let singPop = null;         // { text, at }: a streak milestone, drawn by the line for a moment
+  let bests = {};             // "piece|voice" -> { pct, streak, speed }
+  try { bests = JSON.parse(localStorage.getItem("bv.sing") || "{}") || {}; } catch (e) { /* storage unavailable */ }
+  const bestOf = tr => bests[`${song.key}|${tr.name}`];
+  const starsFor = pct => pct >= 95 ? 3 : pct >= 80 ? 2 : 1;
+  const starText = n => "★".repeat(n);
+  function showStars(tr) {
+    const best = bestOf(tr);
+    if (!tr.starEl) return;
+    tr.starEl.textContent = best ? starText(starsFor(best.pct)) : "";
+    tr.starEl.title = best ? `Your best sung run: ${best.pct}% in time, ${best.streak} in a row, at ${best.speed}% speed` : "";
+  }
   const setText = (id, s) => { const el = $(id); if (el.textContent !== s) el.textContent = s; };
   const wrap12 = x => (((x + 6) % 12) + 12) % 12 - 6;   // distance to the nearest octave of a note, in semitones
   const singNs = () => singTr ? singTr.notes : [];
@@ -1026,6 +1115,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     setText("singLabel", singWait ? "Sing" : "Next");
     setText("singTarget", t ? NAMES[t.midi % 12] : singOn ? "🎉 end" : "–");
     setText("singCount", singOn ? `✓ ${singScore.ok} · waited ${singScore.waited}` : "");
+    setText("singStreak", singOn && singRun && singRun.streak >= 3 ? `${singRun.streak} in a row` : "");
     $("singTag").classList.toggle("waiting", !!singWait);
   }
 
@@ -1034,7 +1124,39 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     pause();
     viewBeat = t.start;
     singWait = t; singWaitAt = performance.now() / 1000; singGuided = false; singOkFor = 0;
+    if (singRun) { singRun.missed++; singRun.streak = 0; }
     showSing();
+  }
+
+  // The music reached the end with Sing on: stop there and say how the run went.
+  function singFinish() {
+    pause(); viewBeat = endBeat;
+    const r = singRun;
+    if (!r || r.done) return;
+    r.done = true;
+    const asked = singScore.ok + r.missed;
+    if (!asked) return;
+    const pct = Math.floor(100 * singScore.ok / asked), pace = Math.round(speed * 100);
+    const counts = r.full && asked >= SING_MIN_RUN, stars = counts ? starsFor(pct) : 0;
+    setText("resWhat", `${$("mvTitle").textContent} · ${singTr.name}`);
+    $("resStars").innerHTML = counts ? `${starText(stars)}<span class="off">${starText(3 - stars)}</span>` : "";
+    $("resStars").setAttribute("aria-label", counts ? `${stars} of 3 stars` : "No stars");
+    $("resStars").hidden = !counts;
+    setText("resPct", pct + "%");
+    setText("resDetail", `${singScore.ok} of ${asked} notes · ${r.top} in a row · speed ${pace}%`);
+    let note = "Practice run: start on the voice's first note for stars.";
+    if (r.full && !counts) note = "Too few notes to count at this speed: slow down for stars.";
+    if (counts) {
+      const key = `${song.key}|${singTr.name}`, old = bests[key];
+      if (!old || pct > old.pct || (pct === old.pct && pace > old.speed)) {
+        bests[key] = { pct, streak: r.top, speed: pace };
+        try { localStorage.setItem("bv.sing", JSON.stringify(bests)); } catch (e) { /* storage unavailable */ }
+        showStars(singTr);
+        note = old ? `New personal best! (it was ${old.pct}%)` : "First full run: that's your mark to beat.";
+      } else note = `Your best: ${old.pct}% at ${old.speed}% speed`;
+    }
+    setText("resBest", note);
+    $("result").hidden = false;
   }
 
   function singTick() {
@@ -1078,6 +1200,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
             if (singFrom < SING_EARLY - 0.04) singLag = Math.min(0.35, Math.max(0, singLag + 0.3 * Math.min(0.25, Math.max(-0.1, -singFrom))));
             for (const n of singGroup(singIdx)) n.sung = 1;
             singScore.ok++; singIdx = singAfter(singIdx); singOkFor = 0;
+            if (singRun) {
+              singRun.top = Math.max(singRun.top, ++singRun.streak);
+              if (STREAK_MARKS.has(singRun.streak)) singPop = { text: `${singRun.streak} in a row!`, at: performance.now() };
+            }
             $("singTag").title = `Tap to hear the note (H). Timing allows ${Math.round((outLat() + singInLat + SING_ANALYSIS + singLag) * 1000)} ms for sound to reach you and come back.`;
           }
         } else {
@@ -1123,6 +1249,9 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const i = singSync(beatNow()), t = singNs()[i] || singNs()[0];
     if (t) seek(Math.max(startBeat - 0.25, t.start - song.bars[barIdx(t.start)].len));
     singIdx = singSync(beatNow()); singLastB = beatNow();
+    singRun = { full: singIdx === 0, streak: 0, top: 0, missed: 0, done: false };
+    singPop = null;
+    $("result").hidden = true;
     if (!playing) play();
     showSing();
   }
@@ -1130,11 +1259,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   async function setSing(on) {
     if (on === singOn || singBusy) return;
     if (!on) {
-      singOn = false; singTr = null; singWait = null; singTrail.length = 0;
+      singOn = false; singTr = null; singWait = null; singTrail.length = 0; singRun = null;
       clearInterval(singTimer);
       stopMic();
       $("sing").setAttribute("aria-pressed", "false");
-      $("singTag").hidden = true;
+      $("singTag").hidden = true; $("singOpts").hidden = true; $("result").hidden = true;
       if (playing) { const b = beatNow(); stopAll(); anchor(b); }   // bring the sung voice back in
       return;
     }
@@ -1147,14 +1276,16 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     singOn = true;
     singTickAt = performance.now() / 1000;
     $("sing").setAttribute("aria-pressed", "true");
-    $("singTag").hidden = false;
+    $("singTag").hidden = false; $("singOpts").hidden = false;
     setText("singHeard", "–");
     singStart();
     singTimer = setInterval(singTick, 25);
   }
 
   function fillSingVoices() {
-    const sel = $("singVoice"), keep = sel.selectedOptions[0] && sel.selectedOptions[0].textContent;
+    let keep = $("singVoice").selectedOptions[0] && $("singVoice").selectedOptions[0].textContent;
+    try { keep = keep || localStorage.getItem("bv.singVoice"); } catch (e) { /* storage unavailable */ }
+    const sel = $("singVoice");
     sel.innerHTML = "";
     song.tracks.forEach((tr, i) => sel.add(new Option(tr.name, i)));
     const same = song.tracks.findIndex(tr => tr.name === keep);
@@ -1245,7 +1376,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       if (vel) voice(n.midi, anchorCtx + (s0 - anchorSec) / speed, (secAt(n.start + n.dur) - s0) / speed, vel, n.tr.kind, n.tr);
     }
     if (beatNow() >= endBeat + 0.25) {
-      if ($("loop").checked) { stopAll(); anchor(startBeat - 0.25); }
+      if (singOn) singFinish();
+      else if ($("loop").checked) { stopAll(); anchor(startBeat - 0.25); }
       else { pause(); viewBeat = endBeat; }
     }
   }
@@ -1264,6 +1396,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function play() {
     if (!notes.length || !ensureAudio()) return;
+    if (singOn && singRun && singRun.done) { singStart(); return; }   // after a finished run, playing starts a new one
     if (viewBeat >= endBeat) viewBeat = startBeat - 0.25;
     anchor(viewBeat);
     playing = true;
@@ -1287,6 +1420,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function seek(b) {
     b = Math.min(endBeat + 0.5, Math.max(startBeat - 1, b));
+    if (singRun) singRun.full = false;   // jumping about makes it a practice run
     if (playing) { stopAll(); anchor(b); } else { viewBeat = b; singWait = null; }
   }
 
@@ -1303,6 +1437,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   const GUTTER = 52, TOP = 26, BOTTOM = 10;
   let pxPerBeat = 150, hover = null, pointer = null, colors = {};
   let headFrac = 0.25;   // where the line sits across the lane; it can be dragged while paused
+  const calm = matchMedia("(prefers-reduced-motion: reduce)");
 
   function readColors() {
     const cs = getComputedStyle(document.documentElement);
@@ -1548,6 +1683,20 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       c.beginPath(); c.roundRect(px - 7, H - BOTTOM - 26, 14, 22, 4); c.fill();
       c.fillStyle = colors.surface;
       for (const dx of [-2.5, 1.5]) c.fillRect(px + dx, H - BOTTOM - 21, 1, 12);
+    }
+
+    // A streak milestone floats up beside the line and fades.
+    if (singOn && singPop) {
+      const age = (performance.now() - singPop.at) / 1600;
+      if (age >= 1) singPop = null;
+      else {
+        c.font = "400 22px 'IM Fell English', Georgia, serif";
+        c.textAlign = "left"; c.textBaseline = "middle";
+        c.globalAlpha = 1 - age * age;
+        c.fillStyle = colors["gilt-hi"];
+        c.fillText(singPop.text, px + 14, TOP + 34 - (calm.matches ? 0 : age * 16));
+        c.globalAlpha = 1;
+      }
     }
 
     // Gutter with pitch names; pitches sounding right now light up.
@@ -1938,17 +2087,30 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       try { localStorage.setItem(key, on ? "1" : "0"); } catch (e) { /* storage unavailable */ }
     });
   }
+  // Sound, view and file settings sit in a panel under the rail; whether it's open is remembered too.
+  const showPanel = on => { $("panel").hidden = !on; $("more").setAttribute("aria-expanded", String(on)); };
+  try { showPanel(localStorage.getItem("bv.more") === "1"); } catch (e) { /* storage unavailable */ }
+  $("more").addEventListener("click", () => {
+    const on = $("panel").hidden;
+    showPanel(on);
+    try { localStorage.setItem("bv.more", on ? "1" : "0"); } catch (e) { /* storage unavailable */ }
+  });
   function setHold(on) {
     holdMode = on;
     $("hold").setAttribute("aria-pressed", String(on));
     stage.classList.toggle("holding", on);
-    $("arp").disabled = !on;
+    $("arp").disabled = !on; $("holdOpts").hidden = !on;
     if (!on) setArp(false);
     if (on) { ensureAudio(); pause(); setSing(false); singWait = null; }
   }
   $("hold").addEventListener("click", () => setHold(!holdMode));
   $("sing").addEventListener("click", () => setSing(!singOn));
-  $("singVoice").addEventListener("change", () => { if (singOn) singStart(); });
+  $("singVoice").addEventListener("change", e => {
+    try { localStorage.setItem("bv.singVoice", e.target.selectedOptions[0].textContent); } catch (err) { /* storage unavailable */ }
+    if (singOn) singStart();
+  });
+  $("resAgain").addEventListener("click", () => { seek(startBeat - 0.25); singStart(); });
+  $("resDone").addEventListener("click", () => setSing(false));
   $("singTag").addEventListener("click", () => singGuide(singPending()));
   $("arp").addEventListener("click", () => setArp(!arpOn));
   $("arpRate").addEventListener("input", e => { $("arpOut").textContent = e.target.value + "/s"; });
@@ -1992,7 +2154,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (token !== loadToken) return; // another movement or file was picked meanwhile
     $("srcErr").textContent = "";
     const info = { ...SUITE, ...mv };
-    loadSong(parseMidi(buf), info.credit(mv));
+    loadSong(parseMidi(buf), info.credit(mv), mv.slug);
     $("byline").textContent = info.byline;
     $("aboutSrc").textContent = info.source;
     $("mvTitle").textContent = mv.title;
@@ -2020,7 +2182,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     try {
       const buf = await file.arrayBuffer();
       if (token !== loadToken) return;
-      loadSong(parseMidi(buf), file.name);
+      loadSong(parseMidi(buf), file.name, "file:" + file.name);
       $("mvTitle").textContent = file.name.replace(/\.midi?$/i, "");
       $("pieceNote").textContent = `Your own file, in ${song.sig}. Pick a movement above to go back to the suite.`;
       for (const b of document.querySelectorAll("#movements button")) b.setAttribute("aria-current", "false");

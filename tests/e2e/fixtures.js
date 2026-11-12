@@ -30,3 +30,8 @@ export async function open(page, slug = "badinerie") {
 }
 
 export const text = (page, id) => page.locator("#" + id).textContent();
+
+// Sound, view and file settings live in the More panel: open it if it's closed.
+export async function openMore(page) {
+  if (await page.locator("#panel").isHidden()) await page.click("#more");
+}

@@ -74,6 +74,67 @@ test.describe("with silence", () => {
     await expect(tag(page)).toHaveClass(/waiting/, { timeout: 8000 });
     await expect(page.locator("#singTarget")).not.toHaveText("–");
   });
+
+  test("the voice and guide controls only show while singing", async ({ page }) => {
+    await expect(page.locator("#singVoice")).toBeHidden();
+    await page.click("#sing");
+    await expect(page.locator("#singVoice")).toBeVisible();
+    await expect(page.locator("#singGuide")).toBeVisible();
+    await page.click("#sing");
+    await expect(page.locator("#singVoice")).toBeHidden();
+  });
+
+  test("a run that starts near the end is practice: a result, but no stars", async ({ page }) => {
+    const box = await page.locator("#mini").boundingBox();
+    await page.mouse.click(box.x + box.width * 0.96, box.y + box.height / 2);
+    await page.click("#sing");
+    for (let i = 0; i < 80 && await page.locator("#result").isHidden(); i++) {
+      if (await tag(page).evaluate(el => el.classList.contains("waiting"))) await page.keyboard.press("Space");
+      await page.waitForTimeout(150);
+    }
+    await expect(page.locator("#result")).toBeVisible();
+    await expect(page.locator("#resWhat")).toHaveText("Menuet · Flute");
+    await expect(page.locator("#resPct")).toHaveText("0%");
+    await expect(page.locator("#resStars")).toBeHidden();
+    await expect(page.locator("#resBest")).toContainText("Practice run");
+    await expect(page.locator("#voices .chip .stars").first()).toHaveText("");
+    await page.click("#resDone");
+    await expect(page.locator("#result")).toBeHidden();
+    await expect(page.locator("#sing")).toHaveAttribute("aria-pressed", "false");
+  });
+});
+
+// A piece of the test's own: ten B's, a beat each at ♩ = 120, after two beats' rest.
+function tenBs() {
+  const ev = [0x00, 0xff, 0x51, 0x03, 0x07, 0xa1, 0x20];
+  for (let i = 0; i < 10; i++) ev.push(...(i ? [0x00] : [0x87, 0x40]), 0x90, 71, 100, 0x83, 0x60, 0x80, 71, 64);
+  ev.push(0x00, 0xff, 0x2f, 0x00);
+  const head = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0, 0x4d, 0x54, 0x72, 0x6b, 0, 0, ev.length >> 8, ev.length & 255];
+  return Buffer.from([...head, ...ev]);
+}
+
+test.describe("singing a whole piece", () => {
+  test.use({ mic: { parts: [{ seconds: 20, hz: B4 }] } });
+
+  test("a full run ends on a result with stars, and the best is kept on the voice's chip", async ({ page }) => {
+    await page.setInputFiles("#midi", { name: "bs.mid", mimeType: "audio/midi", buffer: tenBs() });
+    await expect(page.locator("#mvTitle")).toHaveText("bs");
+    await page.click("#sing");
+    await expect(page.locator("#singStreak")).toHaveText(/^\d+ in a row$/, { timeout: 8000 });
+    await expect(page.locator("#result")).toBeVisible({ timeout: 12000 });
+    await expect(page.locator("#resPct")).toHaveText("100%");
+    await expect(page.locator("#resStars")).toHaveAttribute("aria-label", "3 of 3 stars");
+    await expect(page.locator("#resDetail")).toHaveText("10 of 10 notes · 10 in a row · speed 100%");
+    await expect(page.locator("#resBest")).toContainText("First full run");
+    await expect(page.locator("#voices .chip .stars")).toHaveText("★★★");
+    await expect(page.locator("#play")).toHaveText("Play");
+    // Again starts a new run from the top, and this time there's a best to compare with.
+    await page.click("#resAgain");
+    await expect(page.locator("#result")).toBeHidden();
+    await expect(page.locator("#singCount")).toHaveText("✓ 1 · waited 0", { timeout: 8000 });
+    await expect(page.locator("#result")).toBeVisible({ timeout: 12000 });
+    await expect(page.locator("#resBest")).toHaveText("Your best: 100% at 100% speed");
+  });
 });
 
 test.describe("singing the right note", () => {
