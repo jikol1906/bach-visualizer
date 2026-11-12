@@ -1,6 +1,6 @@
 // Characterization tests: what the app does today, checked only through what a user can see (text, buttons,
 // pixels), never through its internals, so they keep passing while the code is reorganised underneath.
-import { test, expect, open, text } from "./fixtures.js";
+import { test, expect, open, text, openMore } from "./fixtures.js";
 
 const MOVEMENTS = [
   { slug: "ouverture", title: "Ouverture", sig: "4/4", bpm: "76", bar: "–" },
@@ -15,6 +15,7 @@ const MOVEMENTS = [
 const SUITE_VOICES = ["Flute", "Violin1", "Violin2", "Viola", "Cello"];
 
 async function goToBar(page, n) {
+  await openMore(page);
   await page.fill("#goBar", String(n));
   await page.press("#goBar", "Enter");
 }
@@ -146,6 +147,7 @@ test.describe("drawing", () => {
   test("Piano and Guitar show their instruments, and the choice is remembered", async ({ page }) => {
     await open(page);
     await expect(page.locator("#piano")).toBeHidden();
+    await openMore(page);
     await page.click("#showPiano");
     await page.click("#showGuitar");
     await expect(page.locator("#piano")).toBeVisible();
@@ -161,6 +163,7 @@ test.describe("drawing", () => {
 
   test("the lit keys follow the music", async ({ page }) => {
     await open(page);
+    await openMore(page);
     await page.click("#showPiano");
     await goToBar(page, 1);
     await page.click("#hold");
@@ -247,6 +250,8 @@ test.describe("hold chord", () => {
     await page.click("#hold");
     await expect(page.locator("#play")).toHaveText("Play");
     await goToBar(page, 5);
+    await expect(page.locator("#rdBar")).toHaveText("5");
+    await expect(page.locator("#rdChord")).not.toHaveText("–");
     const chord = await text(page, "rdChord");
     await page.keyboard.press("ArrowRight");
     await expect(page.locator("#rdChord")).not.toHaveText(chord);
@@ -275,6 +280,7 @@ test.describe("hold chord", () => {
   test("every Sound plays and holds a chord, and the choice is remembered", async ({ page }) => {
     await open(page);
     await expect(page.locator("#sound")).toHaveValue("orchestra");
+    await openMore(page);
     await page.click("#hold");
     for (const s of ["organ", "harpsichord", "epiano", "chip", "pad", "orchestra", "organ"]) {
       await page.selectOption("#sound", s);
@@ -292,6 +298,8 @@ test.describe("hold chord", () => {
 
   test("the Arp and Reverb sliders show their values", async ({ page }) => {
     await open(page);
+    await openMore(page);
+    await page.click("#hold");
     await page.locator("#arpRate").fill("10");
     await expect(page.locator("#arpOut")).toHaveText("10/s");
     await page.locator("#rev").fill("80");
@@ -315,5 +323,32 @@ test.describe("your own MIDI files", () => {
     await page.setInputFiles("#midi", { name: "notes.mid", mimeType: "audio/midi", buffer: Buffer.from("this is not a midi file") });
     await expect(page.locator("#srcErr")).toHaveText("This doesn't look like a MIDI file.");
     await expect(page.locator("#mvTitle")).toHaveText("Badinerie");
+  });
+});
+
+test.describe("the rail", () => {
+  test("More opens the settings panel, and the choice is remembered", async ({ page }) => {
+    await open(page);
+    await expect(page.locator("#panel")).toBeHidden();
+    await expect(page.locator("#sound")).toBeHidden();
+    await page.click("#more");
+    await expect(page.locator("#more")).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator("#sound")).toBeVisible();
+    await expect(page.locator("#goBar")).toBeVisible();
+    await page.reload();
+    await expect(page.locator("#panel")).toBeVisible();
+    await page.click("#more");
+    await expect(page.locator("#panel")).toBeHidden();
+  });
+
+  test("the arpeggio controls only show while holding a chord", async ({ page }) => {
+    await open(page);
+    await expect(page.locator("#arp")).toBeHidden();
+    await expect(page.locator("#singVoice")).toBeHidden();
+    await page.click("#hold");
+    await expect(page.locator("#arp")).toBeVisible();
+    await expect(page.locator("#arpRate")).toBeVisible();
+    await page.click("#hold");
+    await expect(page.locator("#arp")).toBeHidden();
   });
 });
