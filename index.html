@@ -157,6 +157,8 @@ h1 em { color: var(--gilt); }
 .panel h3 { font: 400 1.05rem var(--display); color: var(--ink); margin: 0 0 6px; }
 .panel .rows { display: grid; gap: 8px; justify-items: start; }
 .panel .rail { gap: 8px; }
+.panel .mix { font: 500 .78rem var(--mono); color: var(--muted); margin: -2px 0 0; max-width: 34ch; }
+.panel .mix[hidden] { display: none; }
 .stage.line canvas { cursor: ew-resize; }
 .chordtag {
   position: absolute; top: 32px; right: 10px; z-index: 2; pointer-events: none;
@@ -170,8 +172,12 @@ h1 em { color: var(--gilt); }
 .singtag span:not(:first-child) { margin-left: 8px; }
 .singtag.waiting { background: var(--gilt); color: var(--surface); }
 .singtag.waiting span, .singtag.waiting .name { color: var(--surface); }
-.singtag #singStreak { color: var(--gilt); font-weight: 500; }
-.singtag.waiting #singStreak { color: var(--surface); }
+.singtag #singStreak, .singtag #blankStreak { color: var(--gilt); font-weight: 500; }
+.singtag.waiting #singStreak, .singtag.waiting #blankStreak { color: var(--surface); }
+#blankTag { cursor: default; pointer-events: none; }
+#blankTag .name { color: var(--err); margin: 0 0 0 8px; }
+#blankTag .name:empty { display: none; }
+#blankTag.waiting .name { color: var(--surface); }
 .singtag span:empty { display: none; }
 /* How a sung run went: shown over the lane when the music reaches the end. */
 .result {
@@ -265,10 +271,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <div class="tip" id="tip" hidden></div>
     <div class="chordtag" id="rdChordBox" hidden><span>Chord</span><b class="name" id="rdChordName" hidden></b><b id="rdChord">–</b></div>
     <div class="chordtag singtag" id="singTag" role="button" tabindex="0" title="Tap to hear the note (H)" hidden><span id="singLabel">Next</span><b class="name" id="singTarget">–</b><span>You</span><b id="singHeard">–</b><span id="singCount"></span><span id="singStreak"></span></div>
+    <div class="chordtag singtag" id="blankTag" hidden><span id="blankLabel">Listen</span><b class="name" id="blankTried"></b><span id="blankCount"></span><span id="blankStreak"></span></div>
     <div class="result" id="result" role="dialog" aria-labelledby="resWhat" hidden>
       <p class="what" id="resWhat"></p>
       <div class="stars" id="resStars" role="img"></div>
-      <p class="pct"><span id="resPct"></span> <small>in time</small></p>
+      <p class="pct"><span id="resPct"></span> <small id="resUnit">in time</small></p>
       <p class="detail" id="resDetail"></p>
       <p class="best" id="resBest"></p>
       <div class="acts"><button class="primary" id="resAgain" type="button">Again</button><button id="resDone" type="button">Done</button></div>
@@ -306,13 +313,26 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <div class="group">
       <button id="hold" type="button" aria-pressed="false" title="While paused, sustain every note under the line and name the chord">Hold chord</button>
       <button id="sing" type="button" aria-pressed="false" title="Sing a voice while the others play: the music waits on any note you miss, and a full run earns stars. Needs a microphone, and headphones so it doesn't hear the speakers.">Sing</button>
+      <button id="blank" type="button" aria-pressed="false" title="Fill in the blanks: notes of one voice go missing, unseen and unheard, and the music waits until you play each one on the piano">Fill in</button>
     </div>
     <div class="group" id="holdOpts" hidden>
       <button id="arp" type="button" disabled aria-pressed="false" title="Keep arpeggiating the held chord, up and down (A)">Arpeggio</button>
       <label class="group ctl" for="arpRate" title="Arpeggio speed, in notes per second">Arp <input id="arpRate" type="range" min="2" max="16" step="0.5" value="6"><output id="arpOut">6/s</output></label>
     </div>
-    <div class="group" id="singOpts" hidden>
+    <div class="group" id="voiceOpts" hidden>
       <label class="group ctl" for="singVoice">Voice <select id="singVoice"></select></label>
+    </div>
+    <div class="group" id="blankOpts" hidden>
+      <label class="group ctl" for="blankHow" title="How many of the voice's notes go missing">Blanks
+        <select id="blankHow">
+          <option value="few">Few</option>
+          <option value="some" selected>Some</option>
+          <option value="many">Many</option>
+          <option value="all">All</option>
+        </select>
+      </label>
+    </div>
+    <div class="group" id="singOpts" hidden>
       <label class="group ctl" for="singGuide" title="Play the voice you're singing softly along with you (headphones only, or the microphone hears it)"><input id="singGuide" type="checkbox"> Guide</label>
     </div>
     <span class="spacer"></span>
@@ -323,16 +343,34 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <div>
       <h3>Sound</h3>
       <div class="rows">
-        <label class="group ctl" for="sound" title="What every voice plays on">Sound
-          <select id="sound">
-            <option value="orchestra" selected>Flute &amp; strings</option>
-            <option value="organ">Organ</option>
-            <option value="harpsichord">Harpsichord</option>
-            <option value="epiano">Electric piano</option>
-            <option value="chip">Chiptune</option>
-            <option value="pad">Synth pad</option>
-          </select>
-        </label>
+        <div class="group rail">
+          <label class="group ctl" for="sound" title="What the voices play on">Sound
+            <select id="sound">
+              <optgroup label="Each voice its own">
+                <option value="orchestra" selected>Flute &amp; strings</option>
+                <option value="random">Random mix</option>
+              </optgroup>
+              <optgroup label="All on one">
+                <option value="organ">Organ</option>
+                <option value="harpsichord">Harpsichord</option>
+                <option value="piano">Piano</option>
+                <option value="lute">Lute</option>
+                <option value="epiano">Electric piano</option>
+                <option value="marimba">Marimba</option>
+                <option value="vibes">Vibraphone</option>
+                <option value="musicbox">Music box</option>
+                <option value="clarinet">Clarinet</option>
+                <option value="oboe">Oboe</option>
+                <option value="brass">Brass</option>
+                <option value="choir">Choir</option>
+                <option value="chip">Chiptune</option>
+                <option value="pad">Synth pad</option>
+              </optgroup>
+            </select>
+          </label>
+          <button id="shuffle" type="button" title="Deal every voice a random instrument">Shuffle</button>
+        </div>
+        <p class="mix" id="mixNote" hidden></p>
         <label class="group ctl" for="vol">Volume <input id="vol" type="range" min="0" max="100" value="70"></label>
         <label class="group ctl" for="rev">Reverb <input id="rev" type="range" min="0" max="100" value="32"><output id="revOut">32%</output></label>
         <label class="group ctl" for="room">Space
@@ -370,9 +408,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   <section class="notes">
     <div>
       <h2>Playing it</h2>
-      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. The <em>C</em> next to each voice pans it: click to send it to the <em>L</em>eft or <em>R</em>ight ear only, then back to the centre. With headphones, put two voices in opposite ears to hear each line on its own. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1</em> and <em>−5</em>), <kbd>Home</kbd> goes back to the start. Sound, reverb, zoom, <em>Go to bar</em>, looping and <em>Load MIDI</em> are under <em>More</em>, and so are <em>Piano</em> and <em>Guitar</em>, which show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
+      <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. The <em>C</em> next to each voice pans it: click to send it to the <em>L</em>eft or <em>R</em>ight ear only, then back to the centre. With headphones, put two voices in opposite ears to hear each line on its own. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1</em> and <em>−5</em>), <kbd>Home</kbd> goes back to the start. Sound (a dozen instruments, or <em>Shuffle</em> to deal every voice a random one), reverb, zoom, <em>Go to bar</em>, looping and <em>Load MIDI</em> are under <em>More</em>, and so are <em>Piano</em> and <em>Guitar</em>, which show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
       <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>), which appears next to it, switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
       <p>To sing along, turn on <em>Sing</em>, allow the microphone and pick your <em>Voice</em>. The music starts a bar before that voice's next note and plays on without it, in time. Sing its notes, in any octave: your pitch is drawn as a line over the score, and every note you hit in time gets a gold bar underneath. Miss one and the music stops on it, holds the harmony and plays the note for you; it carries on as soon as you sing it (<kbd>Space</kbd> skips it). Notes too quick to sing at the current speed never stop the music, so slow down with <em>Speed</em> to be asked for more of them. <em>Guide</em> plays your voice softly along with you. Use headphones, or the microphone will hear the speakers. <kbd>H</kbd> or a tap on the tag plays the next note. The tag also counts your streak of notes in a row. Sing a voice from its first note to the end and you get a result: one star for finishing, two for 80% of the notes in time, three for 95%. Your best run of each voice is kept on this device and shown as stars on its chip.</p>
+      <p>To learn a line by heart, turn on <em>Fill in</em> and pick your <em>Voice</em>. Some of its notes go missing: they aren't drawn and they aren't played, and neither is any note of another voice that doubles them. A gold band with a question mark shows when a missing note falls, but not where. The music stops there and waits; play the note on the keyboard, in any octave. A wrong key is marked red, and after three the note is given away (<kbd>Space</kbd> gives it away at once). Notes the line itself gives away are never the missing ones: a repeated note, the middle of a scale run, a neighbour note. <em>Blanks</em> sets how many go missing, from <em>Few</em> to <em>All</em>, and every run draws new ones. A run from the beginning to the end is scored like a sung one, by the blanks you got at the first try.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
     <div>
@@ -660,6 +699,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     endBeat = Math.max(...all.map(n => n.start + n.dur));
     rebuild();
     renderChips();
+    dealInstruments();
     seek(startBeat - 0.25);
     fillSingVoices();   // with Sing on, this starts a run on the new piece
     $("rdLeadName").textContent = song.tracks[0].name;
@@ -759,16 +799,44 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   const SYNTHS = {
     organ: { atk: 0.012, rel: 0.07, peak: 0.075, vib: 0 },
     harpsichord: { atk: 0.003, rel: 0.1, peak: 0.22, vib: 0, decay: 0.9 },
+    piano: { atk: 0.003, rel: 0.2, peak: 0.12, vib: 0, decay: 1.7 },
+    lute: { atk: 0.002, rel: 0.12, peak: 0.155, vib: 0, decay: 0.7 },
     epiano: { atk: 0.004, rel: 0.25, peak: 0.1, vib: 0, decay: 1.4 },
+    marimba: { atk: 0.002, rel: 0.08, peak: 0.16, vib: 0, decay: 0.4 },
+    vibes: { atk: 0.004, rel: 0.3, peak: 0.11, vib: 0, decay: 2.4 },
+    musicbox: { atk: 0.002, rel: 0.2, peak: 0.105, vib: 0, decay: 1.1 },
+    clarinet: { atk: 0.03, rel: 0.08, peak: 0.1, vib: 4 },
+    oboe: { atk: 0.025, rel: 0.08, peak: 0.11, vib: 8 },
+    brass: { atk: 0.05, rel: 0.12, peak: 0.18, vib: 5 },
+    choir: { atk: 0.12, rel: 0.3, peak: 0.24, vib: 12 },
     chip: { atk: 0.004, rel: 0.03, peak: 0.08, vib: 10 },
     pad: { atk: 0.22, rel: 0.45, peak: 0.2, vib: 6 },
   };
   const soundKind = () => $("sound").value;
+  const KIND_NAMES = {
+    wind: "Flute", string: "Strings", organ: "Organ", harpsichord: "Harpsichord", piano: "Piano", lute: "Lute",
+    epiano: "Electric piano", marimba: "Marimba", vibes: "Vibraphone", musicbox: "Music box", clarinet: "Clarinet",
+    oboe: "Oboe", brass: "Brass", choir: "Choir", chip: "Chiptune", pad: "Synth pad",
+  };
+  // "orchestra" is each voice's own flute or strings, "random" the instrument it was dealt, anything else one
+  // instrument for all.
+  const kindOf = tr => { const k = soundKind(); return k === "orchestra" ? (tr ? tr.kind : "wind") : k === "random" ? (tr && tr.inst) || "wind" : k; };
+  // Deal every voice an instrument, no two alike while there are enough to go round.
+  function dealInstruments() {
+    const pool = Object.keys(KIND_NAMES);
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    song.tracks.forEach((tr, i) => { tr.inst = pool[i % pool.length]; });
+    showMix();
+  }
+  function showMix() {
+    const on = soundKind() === "random" && !!song;
+    $("mixNote").hidden = !on;
+    $("mixNote").textContent = on ? song.tracks.map(tr => `${tr.name}: ${KIND_NAMES[tr.inst]}`).join(" · ") : "";
+  }
 
   // dur = Infinity makes a held voice: it sustains until release() is called on what this returns.
   function voice(midi, when, dur, vel = 0.8, kind = "wind", tr = null, dest = null) {
     if (!ctx) return null;
-    if (soundKind() !== "orchestra") kind = soundKind();
     const f = 440 * 2 ** ((midi - 69) / 12);
     const wind = kind === "wind", held = dur === Infinity, syn = SYNTHS[kind];
     const d = Math.max(dur * 0.92, 0.06);
@@ -835,6 +903,83 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       mg.gain.setTargetAtTime(f * 0.25, when + 0.005, 0.3);
       nodes.push(m);
       osc("sine", f * 4, 0.04, g);   // a little tine on top
+    } else if (kind === "piano") {
+      // A struck string: bright at the hammer, then the filter closes as it rings. Two strings a hair apart.
+      const lp = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.Q.value = 0.7;
+      lp.frequency.setValueAtTime(Math.min(f * (6 + 8 * vel), 13000), when);
+      lp.frequency.setTargetAtTime(Math.min(f * 2.5, 6000), when + 0.005, 0.35);
+      lp.connect(g);
+      osc("triangle", f, 0.75, lp);
+      osc("sawtooth", f, 0.22, lp).detune.value = 3;
+      osc("sawtooth", f, 0.22, lp).detune.value = -3;
+      osc("sine", f * 2, 0.12, lp);
+    } else if (kind === "lute") {
+      // A gut string plucked with the finger: rounder than the harpsichord's quill, and gone sooner.
+      const lp = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.Q.value = 1;
+      lp.frequency.setValueAtTime(Math.min(f * 9, 11000), when);
+      lp.frequency.setTargetAtTime(Math.min(f * 2, 5000), when + 0.004, 0.09);
+      lp.connect(g);
+      osc("triangle", f, 0.8, lp);
+      osc("sawtooth", f, 0.3, lp);
+    } else if (kind === "marimba" || kind === "musicbox" || kind === "vibes") {
+      // Bars and combs: a pure fundamental, with overtones that die away much sooner than it does. The
+      // vibraphone's motor adds a slow tremolo.
+      const parts = kind === "marimba" ? [[4, 0.3, 0.05], [10, 0.08, 0.02]] : kind === "vibes" ? [[4, 0.18, 0.5], [10, 0.05, 0.08]] : [[4, 0.22, 0.25], [5.4, 0.1, 0.1]];
+      let to = g;
+      if (kind === "vibes") {
+        const tg = mk(ctx.createGain()), tl = mk(ctx.createOscillator()), tlg = mk(ctx.createGain());
+        tg.gain.value = 0.8; tl.frequency.value = 5.2; tlg.gain.value = 0.2;
+        tl.connect(tlg).connect(tg.gain); tg.connect(g);
+        to = tg;
+        nodes.push(tl);
+      }
+      osc("sine", f, 1, to);
+      for (const [mult, amp, tau] of parts) {
+        if (f * mult > 14000) continue;
+        const pg = mk(ctx.createGain());
+        pg.gain.setValueAtTime(1, when); pg.gain.setTargetAtTime(0, when, tau);
+        pg.connect(to);
+        osc("sine", f * mult, amp, pg);
+      }
+    } else if (kind === "clarinet") {
+      // Odd harmonics only (a square), rounded off: hollow and woody.
+      const lp = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.Q.value = 0.7; lp.frequency.value = Math.min(f * 5, 7000);
+      lp.connect(g);
+      osc("square", f, 0.5, lp);
+      osc("sine", f, 0.4, lp);
+    } else if (kind === "oboe") {
+      // A reedy saw with two nasal formants.
+      const lp = mk(ctx.createBiquadFilter()), f1 = mk(ctx.createBiquadFilter()), f2 = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.frequency.value = 6000; lp.Q.value = 0.5;
+      f1.type = "peaking"; f1.frequency.value = 1400; f1.Q.value = 2.5; f1.gain.value = 10;
+      f2.type = "peaking"; f2.frequency.value = 3000; f2.Q.value = 3; f2.gain.value = 7;
+      f1.connect(f2).connect(lp).connect(g);
+      osc("sawtooth", f, 0.8, f1);
+    } else if (kind === "brass") {
+      // Two saws behind a filter that opens with the breath and then settles.
+      const lp = mk(ctx.createBiquadFilter());
+      lp.type = "lowpass"; lp.Q.value = 1.2;
+      lp.frequency.setValueAtTime(f * 1.5, when);
+      lp.frequency.linearRampToValueAtTime(Math.min(f * (4 + 4 * vel), 7000), when + 0.07);
+      lp.frequency.setTargetAtTime(Math.min(f * 4, 5000), when + 0.07, 0.15);
+      lp.connect(g);
+      osc("sawtooth", f, 0.5, lp).detune.value = -4;
+      osc("sawtooth", f, 0.5, lp).detune.value = 4;
+    } else if (kind === "choir") {
+      // Voices on "ah": detuned saws through three vowel formants.
+      const src = mk(ctx.createGain());
+      for (const [freq, q, amp] of [[700, 5, 1], [1150, 6, 0.6], [2700, 8, 0.3]]) {
+        const bp = mk(ctx.createBiquadFilter()), bg = mk(ctx.createGain());
+        bp.type = "bandpass"; bp.frequency.value = freq; bp.Q.value = q; bg.gain.value = amp;
+        src.connect(bp).connect(bg).connect(g);
+      }
+      const body = mk(ctx.createBiquadFilter());   // some of the fundamental, so low notes keep their pitch
+      body.type = "lowpass"; body.frequency.value = Math.min(f * 2, 2000);
+      src.connect(body).connect(g);
+      for (const det of [-14, -5, 6, 13]) osc("sawtooth", f, 0.25, src).detune.value = det;
     } else if (kind === "chip") {
       osc("square", f, 1, g);
     } else if (kind === "pad") {
@@ -939,6 +1084,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       const ns = tr.notes;
       for (let i = firstAtOrAfter(ns, b - 16); i < ns.length && ns[i].start <= b + 1e-6; i++) {
         const n = ns[i], end = n.start + n.dur;
+        if (n.hid) continue;   // a blank, or a note that doubles one
         const next = tr.mono && i + 1 < ns.length ? ns[i + 1].start : end;
         if (b < Math.min(Math.max(end, next), end + 1)) out.add(n);
       }
@@ -986,7 +1132,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       const list = arpList();
       const seq = list.length < 2 ? list : list.concat(list.slice(1, -1).reverse());   // up, then down
       const n = seq[arpK++ % seq.length];
-      voice(n.midi, arpNext, Math.min(0.45, step * 2.5), 0.85, n.tr.kind, n.tr);   // shorter notes when fast, to spare the CPU
+      voice(n.midi, arpNext, Math.min(0.45, step * 2.5), 0.85, kindOf(n.tr), n.tr);   // shorter notes when fast, to spare the CPU
       arpShown.push({ t: arpNext, midi: n.midi });
       arpNext += step;
     }
@@ -1106,7 +1252,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   // A reference tone for a note, in the octave nearest to where you've been singing (or a middle one).
   function singGuide(n) {
     if (!ctx || !n) return;
-    voice(Math.round(singLastSung + wrap12(n.midi - singLastSung)), ctx.currentTime + 0.02, 0.6, 0.8, n.tr.kind, n.tr);
+    voice(Math.round(singLastSung + wrap12(n.midi - singLastSung)), ctx.currentTime + 0.02, 0.6, 0.8, kindOf(n.tr), n.tr);
     singGate = ctx.currentTime + 0.8;   // the microphone ignores the tone (and its reverb)
   }
 
@@ -1138,12 +1284,6 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (!asked) return;
     const pct = Math.floor(100 * singScore.ok / asked), pace = Math.round(speed * 100);
     const counts = r.full && asked >= SING_MIN_RUN, stars = counts ? starsFor(pct) : 0;
-    setText("resWhat", `${$("mvTitle").textContent} · ${singTr.name}`);
-    $("resStars").innerHTML = counts ? `${starText(stars)}<span class="off">${starText(3 - stars)}</span>` : "";
-    $("resStars").setAttribute("aria-label", counts ? `${stars} of 3 stars` : "No stars");
-    $("resStars").hidden = !counts;
-    setText("resPct", pct + "%");
-    setText("resDetail", `${singScore.ok} of ${asked} notes · ${r.top} in a row · speed ${pace}%`);
     let note = "Practice run: start on the voice's first note for stars.";
     if (r.full && !counts) note = "Too few notes to count at this speed: slow down for stars.";
     if (counts) {
@@ -1155,8 +1295,172 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
         note = old ? `New personal best! (it was ${old.pct}%)` : "First full run: that's your mark to beat.";
       } else note = `Your best: ${old.pct}% at ${old.speed}% speed`;
     }
-    setText("resBest", note);
+    showResult(singTr, stars, pct, "in time", `${singScore.ok} of ${asked} notes · ${r.top} in a row · speed ${pace}%`, note);
+  }
+
+  // The card over the lane at the end of a run, of Sing or of Fill in. stars 0 means the run didn't count.
+  function showResult(tr, stars, pct, unit, detail, note) {
+    setText("resWhat", `${$("mvTitle").textContent} · ${tr.name}`);
+    $("resStars").innerHTML = stars ? `${starText(stars)}<span class="off">${starText(3 - stars)}</span>` : "";
+    $("resStars").setAttribute("aria-label", stars ? `${stars} of 3 stars` : "No stars");
+    $("resStars").hidden = !stars;
+    setText("resPct", pct + "%"); setText("resUnit", unit);
+    setText("resDetail", detail); setText("resBest", note);
     $("result").hidden = false;
+  }
+
+  // ---------- Fill in the blanks: notes of one voice go missing, and the music waits until you play each one ----------
+  // An exercise for knowing a line by heart. The missing notes are neither drawn nor played, and neither are
+  // notes of other voices that double them (the flute and the first violins often share a line), so the answer
+  // has to come from memory. When the line reaches a blank the music stops on it and holds the other voices; play
+  // the note on the piano (or a guitar neck), in any octave, and it carries on. Notes that the line itself gives
+  // away are never blanked: a repeat of the note before, the middle of a scale run, a neighbour note that steps
+  // out and straight back, or an ornament too short to matter.
+  const BLANK_FRAC = { few: 1 / 8, some: 1 / 4, many: 1 / 2, all: 1 };
+  const BLANK_TRIES = 3;      // wrong guesses before the note is given away
+  const BLANK_MIN_RUN = 5;    // a full run with fewer blanks than this earns nothing
+  let blankOn = false, blankTr = null, blankList = [], blankIdx = 0, blankWait = null, blankRun = null;
+  const blankWrong = new Set();   // pitch classes tried on the blank the music is waiting on
+  let blankBests = {};            // "piece|voice|how many" -> { pct, streak }
+  try { blankBests = JSON.parse(localStorage.getItem("bv.blank") || "{}") || {}; } catch (e) { /* storage unavailable */ }
+
+  function blankCandidates(tr) {
+    const ns = tr.notes, out = [];
+    for (let i = 0; i < ns.length; i++) {
+      const n = ns[i], p = ns[i - 1], q = ns[i + 1];
+      if (secAt(n.start + n.dur) - secAt(n.start) < 0.12) continue;
+      if (tr.mono && p) {
+        const up = n.midi - p.midi;
+        if (!up) continue;
+        if (q && Math.abs(up) <= 2) {
+          const on = q.midi - n.midi;
+          if (q.midi === p.midi || (on && Math.abs(on) <= 2 && on * up > 0)) continue;
+        }
+      }
+      out.push(n);
+    }
+    return out.length >= 4 ? out : ns.slice();
+  }
+  const blankSync = b => { const i = blankList.findIndex(t => t.hid && t.start >= b - 1e-3); blankIdx = i < 0 ? blankList.length : i; };
+  const blankClear = () => { if (song) for (const tr of song.tracks) for (const n of tr.notes) { delete n.hid; delete n.got; delete n.twins; } };
+
+  function showBlank() {
+    const r = blankRun;
+    setText("blankLabel", blankWait ? "Which note?" : "Listen");
+    setText("blankTried", [...blankWrong].map(pc => "✗ " + NAMES[pc]).join(" "));
+    setText("blankCount", r ? `✓ ${r.ok} · ✗ ${r.missed} · ${blankList.filter(t => t.hid).length} to go` : "");
+    setText("blankStreak", r && r.streak >= 3 ? `${r.streak} in a row` : "");
+    $("blankTag").classList.toggle("waiting", !!blankWait);
+  }
+
+  // A new run from where the line is, with a fresh draw of blanks over the whole voice.
+  function blankStart() {
+    if (playing) pause();
+    blankClear();
+    blankTr = song.tracks[Number($("singVoice").value)] || song.tracks[0];
+    if (viewBeat >= endBeat - 1e-3) viewBeat = startBeat - 0.25;
+    const how = $("blankHow").value, f = BLANK_FRAC[how] || 0.25, cands = blankCandidates(blankTr);
+    for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [cands[i], cands[j]] = [cands[j], cands[i]]; }
+    // Short of "All", blanks keep at least a beat apart, so the music gets going between them.
+    const want = Math.max(1, Math.round(cands.length * f)), picked = [];
+    for (const n of cands) {
+      if (picked.length >= want) break;
+      if (f < 1 && picked.some(o => Math.abs(o.start - n.start) < 1)) continue;
+      picked.push(n);
+    }
+    blankList = picked.sort((x, y) => x.start - y.start);
+    for (const t of blankList) {
+      t.hid = true; t.twins = [];
+      for (const tr of song.tracks) {
+        if (tr === blankTr) continue;
+        for (let i = firstAtOrAfter(tr.notes, t.start - 0.07); i < tr.notes.length && tr.notes[i].start <= t.start + 0.07; i++) {
+          const n = tr.notes[i];
+          if ((n.midi - t.midi) % 12 === 0) { n.hid = true; t.twins.push(n); }
+        }
+      }
+    }
+    const ahead = blankList.filter(t => t.start >= viewBeat - 1e-3).length;
+    blankRun = { full: ahead === blankList.length, ok: 0, missed: 0, streak: 0, top: 0, done: false, how };
+    blankWait = null; blankWrong.clear(); singPop = null; miniDirty = true;
+    $("result").hidden = true;
+    showBlank();
+    play();
+  }
+
+  function blankFreeze(t) {
+    pause();
+    viewBeat = t.start;
+    blankWait = t; blankWrong.clear();
+    showBlank();
+  }
+
+  // Show the note and carry on: `first` when it was played right at the first go.
+  function blankResolve(first) {
+    const t = blankWait, r = blankRun;
+    if (!t) return;
+    if (first) { r.ok++; r.top = Math.max(r.top, ++r.streak); if (STREAK_MARKS.has(r.streak)) singPop = { text: `${r.streak} in a row!`, at: performance.now() }; }
+    else {
+      if (!blankWrong.size) { r.missed++; r.streak = 0; }   // given up on without a guess
+      singPop = { text: `It was ${NAMES[t.midi % 12]}`, at: performance.now() };
+    }
+    for (const n of [t, ...t.twins]) delete n.hid;
+    t.got = first ? 1 : 2;
+    blankWait = null; blankWrong.clear(); miniDirty = true;
+    viewBeat = t.start;
+    showBlank();
+    play();   // from the note, which now sounds
+  }
+
+  // A key was pressed while the music waits.
+  function blankGuess(m) {
+    const t = blankWait;
+    if (!t) return;
+    if ((m - t.midi) % 12 === 0) { blankResolve(!blankWrong.size); return; }
+    if (!blankWrong.size) { blankRun.missed++; blankRun.streak = 0; }
+    blankWrong.add(((m % 12) + 12) % 12);
+    if (blankWrong.size >= BLANK_TRIES) blankResolve(false); else showBlank();
+  }
+
+  function blankFinish() {
+    pause(); viewBeat = endBeat;
+    const r = blankRun;
+    if (!r || r.done) return;
+    r.done = true;
+    const asked = r.ok + r.missed;
+    if (!asked) return;
+    const pct = Math.floor(100 * r.ok / asked), counts = r.full && asked >= BLANK_MIN_RUN;
+    let note = "Practice run: start at the beginning for stars.";
+    if (r.full && !counts) note = "Too few blanks to count: ask for more of them.";
+    if (counts) {
+      const key = `${song.key}|${blankTr.name}|${r.how}`, old = blankBests[key];
+      if (!old || pct > old.pct) {
+        blankBests[key] = { pct, streak: r.top };
+        try { localStorage.setItem("bv.blank", JSON.stringify(blankBests)); } catch (e) { /* storage unavailable */ }
+        note = old ? `New personal best! (it was ${old.pct}%)` : "First full run: that's your mark to beat.";
+      } else note = `Your best with this many blanks: ${old.pct}%`;
+    }
+    showResult(blankTr, counts ? starsFor(pct) : 0, pct, "first try", `${r.ok} of ${asked} blanks · ${r.top} in a row`, note);
+  }
+
+  function setBlank(on) {
+    if (on === blankOn || !song) return;
+    if (on) {
+      if (!ensureAudio()) return;
+      if (holdMode) setHold(false);
+      setSing(false);
+      blankOn = true;
+      $("piano").hidden = false;   // the answers go on the keyboard
+      blankStart();
+    } else {
+      blankOn = false; blankWait = null; blankRun = null; blankList = []; blankWrong.clear(); miniDirty = true;
+      blankClear();
+      $("piano").hidden = $("showPiano").getAttribute("aria-pressed") !== "true";
+      $("result").hidden = true;
+      if (playing) { const b = beatNow(); stopAll(); anchor(b); }   // bring the missing notes back in
+    }
+    $("blank").setAttribute("aria-pressed", String(on));
+    $("blankTag").hidden = !on; $("blankOpts").hidden = !on;
+    $("voiceOpts").hidden = !(singOn || blankOn);
   }
 
   function singTick() {
@@ -1263,7 +1567,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       clearInterval(singTimer);
       stopMic();
       $("sing").setAttribute("aria-pressed", "false");
-      $("singTag").hidden = true; $("singOpts").hidden = true; $("result").hidden = true;
+      $("singTag").hidden = true; $("singOpts").hidden = true; $("voiceOpts").hidden = !blankOn; $("result").hidden = true;
       if (playing) { const b = beatNow(); stopAll(); anchor(b); }   // bring the sung voice back in
       return;
     }
@@ -1273,10 +1577,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     catch (e) { singBusy = false; singError("microphone blocked"); return; }
     singBusy = false;
     if (holdMode) setHold(false);
+    setBlank(false);
     singOn = true;
     singTickAt = performance.now() / 1000;
     $("sing").setAttribute("aria-pressed", "true");
-    $("singTag").hidden = false; $("singOpts").hidden = false;
+    $("singTag").hidden = false; $("singOpts").hidden = false; $("voiceOpts").hidden = false;
     setText("singHeard", "–");
     singStart();
     singTimer = setInterval(singTick, 25);
@@ -1291,8 +1596,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const same = song.tracks.findIndex(tr => tr.name === keep);
     sel.value = same >= 0 ? same : 0;
     if (singOn) singStart();
+    if (blankOn) blankStart();
   }
-
 
   function releaseHeld() {
     for (const v of heldVoices.values()) v.release();
@@ -1300,14 +1605,14 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   }
 
   function updateChord() {
-    chord = (holdMode || singWait) && !playing ? chordAt(viewBeat) : new Set();
+    chord = (holdMode || singWait || blankWait) && !playing ? chordAt(viewBeat) : new Set();
     const audible = ctx && ctx.state === "running", now = ctx ? ctx.currentTime : 0;
     for (const [n, v] of heldVoices) {
       // A note that drops out keeps sounding for a moment before it fades. A finger resting near a note's
       // start wobbles it in and out of the chord, and restarting it each time meant a fresh attack over the
       // old one's fade, again and again: audible, and enough work to make a phone's audio crackle.
       if (chord.has(n) && audible) { v.gone = 0; continue; }
-      if (audible && (holdMode || singWait) && !playing && (v.gone ||= now) > now - 0.1) continue;
+      if (audible && (holdMode || singWait || blankWait) && !playing && (v.gone ||= now) > now - 0.1) continue;
       // Fast drags pile up fading voices; past a dozen, fade the newcomers quickly to spare a phone's CPU.
       for (const f of fading) if (f.until <= now) fading.delete(f);
       v.release(undefined, fading.size > 12 ? 0.04 : undefined);
@@ -1316,7 +1621,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
     if (audible) {
       let added = false;
-      for (const n of chord) if (!heldVoices.has(n)) { heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), n.tr.kind, n.tr)); added = true; }
+      for (const n of chord) if (!heldVoices.has(n)) { heldVoices.set(n, voice(n.midi, ctx.currentTime + 0.005, Infinity, Math.min(n.vel, 0.8), kindOf(n.tr), n.tr)); added = true; }
       if (added || heldVoices.size !== lastChordSize) {
         // Roughly equal loudness whatever the chord size: full level up to 3 notes, then 1/sqrt(n).
         heldBus.gain.setTargetAtTime(Math.min(1, Math.sqrt(3 / Math.max(heldVoices.size, 1))), ctx.currentTime, 0.03);
@@ -1365,18 +1670,26 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     anchorCtx = ctx.currentTime + 0.04;
     anchorSec = secAt(b);
     schedIdx = firstAtOrAfter(notes, b);
+    if (blankOn) blankSync(b);
   }
 
   function schedule() {
+    if (blankOn) {
+      while (blankList[blankIdx] && !blankList[blankIdx].hid) blankIdx++;
+      const t = blankList[blankIdx];
+      if (t && beatHeard() >= t.start) { blankFreeze(t); return; }
+    }
     const horizon = beatAtSec(anchorSec + (ctx.currentTime + 0.2 - anchorCtx) * speed);
     while (schedIdx < notes.length && notes[schedIdx].start < horizon) {
       const n = notes[schedIdx++], s0 = secAt(n.start);
+      if (n.hid) continue;
       // While singing, your voice drops out of the backing, or with Guide plays softly under you.
       const vel = singOn && n.tr === singTr ? ($("singGuide").checked ? n.vel * 0.3 : 0) : n.vel;
-      if (vel) voice(n.midi, anchorCtx + (s0 - anchorSec) / speed, (secAt(n.start + n.dur) - s0) / speed, vel, n.tr.kind, n.tr);
+      if (vel) voice(n.midi, anchorCtx + (s0 - anchorSec) / speed, (secAt(n.start + n.dur) - s0) / speed, vel, kindOf(n.tr), n.tr);
     }
     if (beatNow() >= endBeat + 0.25) {
       if (singOn) singFinish();
+      else if (blankOn) blankFinish();
       else if ($("loop").checked) { stopAll(); anchor(startBeat - 0.25); }
       else { pause(); viewBeat = endBeat; }
     }
@@ -1397,6 +1710,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   function play() {
     if (!notes.length || !ensureAudio()) return;
     if (singOn && singRun && singRun.done) { singStart(); return; }   // after a finished run, playing starts a new one
+    if (blankWait) { blankResolve(false); return; }                   // playing on while waiting gives the note away
+    if (blankOn && blankRun && blankRun.done) { blankStart(); return; }
     if (viewBeat >= endBeat) viewBeat = startBeat - 0.25;
     anchor(viewBeat);
     playing = true;
@@ -1421,7 +1736,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   function seek(b) {
     b = Math.min(endBeat + 0.5, Math.max(startBeat - 1, b));
     if (singRun) singRun.full = false;   // jumping about makes it a practice run
-    if (playing) { stopAll(); anchor(b); } else { viewBeat = b; singWait = null; }
+    if (blankRun) blankRun.full = false;
+    if (playing) { stopAll(); anchor(b); } else { viewBeat = b; singWait = null; if (blankWait) { blankWait = null; blankWrong.clear(); showBlank(); } }
   }
 
   function setSpeed(pct) {
@@ -1441,7 +1757,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
 
   function readColors() {
     const cs = getComputedStyle(document.documentElement);
-    for (const k of ["surface", "ink", "muted", "line", "lane", "lane-alt", "gilt-hi", "key-white", "key-black", "v0", "v1", "v2", "v3", "v4", "v5"]) colors[k] = cs.getPropertyValue("--" + k).trim();
+    for (const k of ["err", "surface", "ink", "muted", "line", "lane", "lane-alt", "gilt-hi", "key-white", "key-black", "v0", "v1", "v2", "v3", "v4", "v5"]) colors[k] = cs.getPropertyValue("--" + k).trim();
     colors.ver = (colors.ver || 0) + 1;   // lets cached drawings know the theme changed
   }
   readColors();
@@ -1515,6 +1831,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       c.fillStyle = colors["v" + tr.color];
       c.globalAlpha = spot.size && !spot.has(tr) ? 0.25 : 1;
       for (const n of tr.notes) {
+        if (n.hid) continue;
         const x = mx(n.start), w = Math.max(1, mx(n.start + n.dur) - x);
         c.fillRect(x, MTOP + (hi - n.midi) / (hi - lo + 1) * h, w, ph);
       }
@@ -1584,7 +1901,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     requestAnimationFrame(draw);
     if (!W || !song) return;
     updateChord();
-    const holding = (holdMode || singWait) && !playing;
+    const holding = (holdMode || singWait || blankWait) && !playing;
     const st = singPending();   // the next note to sing (and any that start with it)
     const isSt = n => st && n.tr === st.tr && Math.abs(n.start - st.start) < 1e-3;
     const now = beatHeard();
@@ -1635,6 +1952,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       let started = false;
       for (let i = firstAtOrAfter(tr.notes, b0 - 4); i < tr.notes.length && tr.notes[i].start < b1 + 1; i++) {
         const n = tr.notes[i], x = xOf(n.start, now) + 3, y = yOf(n.midi) + lh / 2;
+        if (n.hid) continue;
         if (!started) { c.moveTo(x, y); started = true; } else c.lineTo(x, y);
       }
       c.strokeStyle = colors["v" + tr.color];
@@ -1655,7 +1973,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       const col = colors["v" + tr.color];
       for (let i = firstAtOrAfter(tr.notes, b0 - 8); i < tr.notes.length && tr.notes[i].start < b1; i++) {
         const n = tr.notes[i], x = xOf(n.start, now), w = Math.max(n.dur * pxPerBeat - 3, 3), y = yOf(n.midi) + 1;
-        if (x + w < GUTTER) continue;
+        if (x + w < GUTTER || n.hid) continue;
         const active = holding ? chord.has(n) || (singWait && isSt(n)) : now >= n.start && now < n.start + n.dur;
         const past = !active && now >= n.start + n.dur;
         if (active) { if (t === leadIdx) lead = n; if (!top || n.midi > top.midi) top = n; }
@@ -1668,10 +1986,22 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
         else if (n === hover || (arpMidi === n.midi && chord.has(n))) { c.strokeStyle = colors.ink; c.lineWidth = 2; c.stroke(); }
         if (w > 30 && h >= 13) { c.fillStyle = colors.surface; c.fillText(noteName(n.midi), x + w / 2, y + h / 2 + 0.5); }
         // Sung notes get a bar underneath: gilt when sung in time, faint when the music had to wait.
+        if (n.got && blankOn) { c.fillStyle = n.got === 1 ? colors["gilt-hi"] : colors.err; c.fillRect(x, y + h + 0.5, w, 2); }
         if (n.sung && singOn) { c.fillStyle = n.sung === 1 ? colors["gilt-hi"] : colors.muted; c.fillRect(x, y + h + 0.5, w, 2); }
       }
     }
     if (singOn) drawSingTrail(c, now, lh, px);
+    // Blanks: when the missing note falls, but not where.
+    if (blankOn) {
+      c.font = "400 18px 'IM Fell English', Georgia, serif"; c.textAlign = "center";
+      for (const t of blankList) {
+        if (!t.hid || t.start > b1 || t.start + t.dur < b0) continue;
+        const x = xOf(t.start, now), w = Math.max(t.dur * pxPerBeat - 3, 3);
+        c.fillStyle = colors["gilt-hi"];
+        c.globalAlpha = t === blankWait ? 0.3 : 0.14; c.fillRect(x, TOP, w, H - TOP - BOTTOM);
+        c.globalAlpha = 1; c.fillText("?", x + Math.max(w, 12) / 2, TOP + 16);
+      }
+    }
     c.restore();
 
     // Playhead
@@ -1686,7 +2016,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
 
     // A streak milestone floats up beside the line and fades.
-    if (singOn && singPop) {
+    if (singPop) {
       const age = (performance.now() - singPop.at) / 1600;
       if (age >= 1) singPop = null;
       else {
@@ -1707,7 +2037,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const sounding = new Map(), rank = tr => spot.has(tr) ? -1 : song.tracks.indexOf(tr);
     const claim = n => { const cur = sounding.get(n.midi); if (!cur || rank(n.tr) < rank(cur)) sounding.set(n.midi, n.tr); };
     if (holding) for (const n of chord) claim(n);
-    else for (let i = firstAtOrAfter(notes, now - 8); i < notes.length && notes[i].start <= now; i++) if (now < notes[i].start + notes[i].dur) claim(notes[i]);
+    else for (let i = firstAtOrAfter(notes, now - 8); i < notes.length && notes[i].start <= now; i++) if (now < notes[i].start + notes[i].dur && !notes[i].hid) claim(notes[i]);
     c.font = `400 ${Math.max(8, Math.min(12, lh * 0.8))}px 'IBM Plex Mono', monospace`;
     for (let m = lo; m <= hi; m++) {
       if (lh < 12 && BLACK.has(m % 12)) continue;
@@ -1759,13 +2089,13 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       if (!tr.on) continue;
       for (let i = firstAtOrAfter(tr.notes, b - 8); i < tr.notes.length && tr.notes[i].start <= b; i++) {
         const n = tr.notes[i];
-        if (n.midi === m && b >= n.start && b <= n.start + n.dur) return n;
+        if (n.midi === m && b >= n.start && b <= n.start + n.dur && !n.hid) return n;
       }
     }
     return null;
   }
 
-  const hearNote = (n, vel) => voice(n.midi, ctx.currentTime + 0.005, Math.min(Math.max((secAt(n.start + n.dur) - secAt(n.start)) / speed, 0.25), 0.8), vel, n.tr.kind);
+  const hearNote = (n, vel) => voice(n.midi, ctx.currentTime + 0.005, Math.min(Math.max((secAt(n.start + n.dur) - secAt(n.start)) / speed, 0.25), 0.8), vel, kindOf(n.tr));
 
   function updateHover(x, y, sound) {
     const n = noteAt(x, y);
@@ -1833,6 +2163,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       const lit = mine.has(m) || sounding.has(m);
       c.fillStyle = fill(m, colors["key-white"]);
       c.fillRect(k.x, 0, k.w, PH);
+      if (blankWrong.has(m % 12)) { c.fillStyle = colors.err; c.globalAlpha = 0.45; c.fillRect(k.x, PH * 0.55, k.w, PH * 0.45); c.globalAlpha = 1; }
       c.fillStyle = colors.line; c.fillRect(Math.round(k.x), 0, 1, PH);
       if (m % 12 === 0 && k.w >= 12) { c.fillStyle = lit ? colors.surface : colors.muted; c.fillText(noteName(m), k.x + k.w / 2, PH - 6); }
     }
@@ -1840,6 +2171,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       if (!k.black) continue;
       c.fillStyle = fill(m, colors["key-black"]);
       c.beginPath(); c.roundRect(k.x, -2, k.w, bh + 2, [0, 0, 3, 3]); c.fill();
+      if (blankWrong.has(m % 12)) { c.fillStyle = colors.err; c.globalAlpha = 0.7; c.fillRect(k.x, bh * 0.5, k.w, bh * 0.5); c.globalAlpha = 1; }
     }
     // The arpeggio's current note gets an outline, as in the lane.
     const a = arpMidi != null && keyRects.get(arpMidi);
@@ -1856,7 +2188,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const where = p => p ? `${p.bd.id}:${p.s}:${p.f}` : "";
     if (cur && cur.midi === m && where(cur.pos) === where(pos)) return;
     if (cur && cur.v) cur.v.release();
-    const kind = song ? song.tracks[leadIdx].kind : "wind";
+    const kind = kindOf(song && song.tracks[leadIdx]);
     pressed.set(id, { midi: m, pos, v: m == null || !ctx ? null : voice(m, ctx.currentTime + 0.005, Infinity, 0.8, kind, null, master) });
   }
   function liftKey(id) {
@@ -1872,7 +2204,9 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       e.preventDefault();
       ensureAudio();
       el.setPointerCapture(e.pointerId);
-      pressKey(e.pointerId, at(e));
+      const hit = at(e);
+      pressKey(e.pointerId, hit);
+      if (hit && blankWait) blankGuess(hit.m);   // sliding on to other keys isn't a guess
     });
     el.addEventListener("pointermove", e => { if (pressed.has(e.pointerId)) pressKey(e.pointerId, at(e)); });
     for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) el.addEventListener(type, e => liftKey(e.pointerId));
@@ -2101,16 +2435,22 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     stage.classList.toggle("holding", on);
     $("arp").disabled = !on; $("holdOpts").hidden = !on;
     if (!on) setArp(false);
-    if (on) { ensureAudio(); pause(); setSing(false); singWait = null; }
+    if (on) { ensureAudio(); setBlank(false); pause(); setSing(false); singWait = null; }
   }
   $("hold").addEventListener("click", () => setHold(!holdMode));
   $("sing").addEventListener("click", () => setSing(!singOn));
+  $("blank").addEventListener("click", () => setBlank(!blankOn));
+  $("blankHow").addEventListener("change", e => { if (blankOn) blankStart(); e.target.blur(); });
   $("singVoice").addEventListener("change", e => {
     try { localStorage.setItem("bv.singVoice", e.target.selectedOptions[0].textContent); } catch (err) { /* storage unavailable */ }
     if (singOn) singStart();
+    if (blankOn) blankStart();
+    e.target.blur();
   });
-  $("resAgain").addEventListener("click", () => { seek(startBeat - 0.25); singStart(); });
-  $("resDone").addEventListener("click", () => setSing(false));
+  $("resAgain").addEventListener("click", () => {
+    if (blankOn) { viewBeat = startBeat - 0.25; blankStart(); } else { seek(startBeat - 0.25); singStart(); }
+  });
+  $("resDone").addEventListener("click", () => blankOn ? setBlank(false) : setSing(false));
   $("singTag").addEventListener("click", () => singGuide(singPending()));
   $("arp").addEventListener("click", () => setArp(!arpOn));
   $("arpRate").addEventListener("input", e => { $("arpOut").textContent = e.target.value + "/s"; });
@@ -2122,11 +2462,22 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (rev) rev.buffer = makeIR(Number(e.target.value));
   });
   // The sound is remembered on this device. A held chord is struck again so you hear the new sound at once.
-  try { const s = localStorage.getItem("bv.sound"); if (s && s in SYNTHS) $("sound").value = s; } catch (e) { /* storage unavailable */ }
-  $("sound").addEventListener("change", e => {
-    try { localStorage.setItem("bv.sound", e.target.value); } catch (err) { /* storage unavailable */ }
+  try { const s = localStorage.getItem("bv.sound"); if (s && (s in SYNTHS || s === "random")) $("sound").value = s; } catch (e) { /* storage unavailable */ }
+  const soundChanged = () => {
+    try { localStorage.setItem("bv.sound", soundKind()); } catch (err) { /* storage unavailable */ }
+    showMix();
     if (heldVoices.size) { releaseHeld(); updateChord(); }
+  };
+  $("sound").addEventListener("change", e => {
+    soundChanged();
     e.target.blur();   // so Space and the arrows go back to the transport
+  });
+  // Shuffle deals again, and switches to the random mix if it wasn't on.
+  $("shuffle").addEventListener("click", () => {
+    if (!song) return;
+    $("sound").value = "random";
+    dealInstruments();
+    soundChanged();
   });
   $("goForm").addEventListener("submit", e => {
     e.preventDefault();

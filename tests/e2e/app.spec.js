@@ -282,7 +282,7 @@ test.describe("hold chord", () => {
     await expect(page.locator("#sound")).toHaveValue("orchestra");
     await openMore(page);
     await page.click("#hold");
-    for (const s of ["organ", "harpsichord", "epiano", "chip", "pad", "orchestra", "organ"]) {
+    for (const s of ["organ", "harpsichord", "piano", "lute", "epiano", "marimba", "vibes", "musicbox", "clarinet", "oboe", "brass", "choir", "chip", "pad", "random", "orchestra", "organ"]) {
       await page.selectOption("#sound", s);
       await goToBar(page, 2);
       await expect(page.locator("#rdChordName")).toHaveText("Bm");
@@ -294,6 +294,32 @@ test.describe("hold chord", () => {
     }
     await page.reload();
     await expect(page.locator("#sound")).toHaveValue("organ");
+  });
+
+  test("Random mix deals every voice an instrument, Shuffle deals again, and it's remembered", async ({ page }) => {
+    await open(page);
+    await openMore(page);
+    await expect(page.locator("#mixNote")).toBeHidden();
+    await page.selectOption("#sound", "random");
+    const mix = page.locator("#mixNote");
+    await expect(mix).toBeVisible();
+    for (const v of SUITE_VOICES) await expect(mix).toContainText(v + ": ");
+    // Five voices, five different instruments.
+    const dealt = (await mix.textContent()).split(" · ").map(x => x.split(": ")[1]);
+    expect(new Set(dealt).size).toBe(5);
+    await page.selectOption("#sound", "organ");
+    await expect(mix).toBeHidden();
+    await page.click("#shuffle");
+    await expect(page.locator("#sound")).toHaveValue("random");
+    await expect(mix).toBeVisible();
+    await page.click("#play");
+    await page.waitForTimeout(400);
+    await page.click("#shuffle");   // while playing
+    await page.waitForTimeout(400);
+    await page.click("#play");
+    await page.reload();
+    await expect(page.locator("#sound")).toHaveValue("random");
+    await expect(page.locator("#mixNote")).toContainText("Cello: ");
   });
 
   test("the Arp and Reverb sliders show their values", async ({ page }) => {
