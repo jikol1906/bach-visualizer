@@ -225,7 +225,28 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
   cursor: pointer; touch-action: pan-y;
 }
-.piano[hidden], .guitar[hidden] { display: none; }
+.piano[hidden], .guitar[hidden], .guess[hidden] { display: none; }
+/* Fill in's slider: an octave of notes to slide along, each sounding as the knob reaches it; letting go is the guess. */
+.guess {
+  position: relative; display: grid; grid-template-columns: repeat(12, 1fr); height: 76px; margin-top: -6px;
+  background: var(--surface); border: 1px solid var(--gilt); border-radius: 6px;
+  cursor: pointer; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.guess:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
+.guess.idle { border-color: var(--line); cursor: default; }
+.guess .hint { grid-column: 1 / -1; align-self: center; text-align: center; padding: 0 12px; font: 500 .85rem var(--body); color: var(--muted); }
+.guess .rail-line { position: absolute; left: calc(100% / 24); right: calc(100% / 24); top: 26px; height: 4px; border-radius: 2px; background: var(--line); }
+.guess .step { position: relative; padding-top: 48px; text-align: center; font: 500 .72rem var(--mono); color: var(--muted); }
+.guess .step::before { content: ""; position: absolute; left: 50%; top: 23px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: var(--muted); }
+.guess .step.on { color: var(--ink); font-weight: 600; }
+.guess .step.wrong { color: var(--err); text-decoration: line-through; }
+.guess .step.wrong::before { background: var(--err); }
+.guess .knob {
+  position: absolute; top: 10px; width: 36px; height: 36px; margin-left: -18px; border-radius: 50%; pointer-events: none;
+  background: var(--gilt-hi); border: 2px solid var(--surface); box-shadow: 0 2px 8px rgb(0 0 0 / .3);
+}
+.guess .knob.wrong { background: var(--err); }
+.guess .knob[hidden] { display: none; }
 @media (max-width: 600px) { .piano { height: 72px; } }
 .guitar { display: grid; gap: 4px; }
 .fbhead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 30px; }
@@ -283,6 +304,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <button class="unlock" id="unlock" type="button">Click once to turn on sound</button>
   </div>
 
+  <div class="guess idle" id="guess" role="slider" tabindex="0" hidden aria-label="The missing note: slide to hear the notes and let go on the right one (or use the arrow keys and Enter)" aria-valuemin="0" aria-valuemax="11" aria-valuenow="0"></div>
+
   <canvas class="piano" id="piano" hidden aria-label="Piano keyboard. Keys light up in each voice's colour as its notes sound; press a key to play it."></canvas>
 
   <div class="guitar" id="guitar" hidden>
@@ -313,7 +336,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     <div class="group">
       <button id="hold" type="button" aria-pressed="false" title="While paused, sustain every note under the line and name the chord">Hold chord</button>
       <button id="sing" type="button" aria-pressed="false" title="Sing a voice while the others play: the music waits on any note you miss, and a full run earns stars. Needs a microphone, and headphones so it doesn't hear the speakers.">Sing</button>
-      <button id="blank" type="button" aria-pressed="false" title="Fill in the blanks: notes of one voice go missing, unseen and unheard, and the music waits until you play each one on the piano">Fill in</button>
+      <button id="blank" type="button" aria-pressed="false" title="Fill in the blanks: notes of one voice go missing, unseen and unheard, and the music waits until you find each one on the slider">Fill in</button>
     </div>
     <div class="group" id="holdOpts" hidden>
       <button id="arp" type="button" disabled aria-pressed="false" title="Keep arpeggiating the held chord, up and down (A)">Arpeggio</button>
@@ -411,7 +434,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       <p>Hover over any note to hear it. Click a voice above to hide and mute it, or its ◎ to put it in the spotlight (click several ◎ to spotlight several voices): the other voices keep playing but step back. The <em>C</em> next to each voice pans it: click to send it to the <em>L</em>eft or <em>R</em>ight ear only, then back to the centre. With headphones, put two voices in opposite ears to hear each line on its own. Drag or scroll the lane sideways to move through the piece. <kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> jump a bar (or use <em>−1</em> and <em>−5</em>), <kbd>Home</kbd> goes back to the start. Sound (a dozen instruments, or <em>Shuffle</em> to deal every voice a random one), reverb, zoom, <em>Go to bar</em>, looping and <em>Load MIDI</em> are under <em>More</em>, and so are <em>Piano</em> and <em>Guitar</em>, which show a keyboard and two guitar necks under the lane. The keyboard lights up each note as it sounds, in its voice's colour, and you can press its keys (or slide along them) to play along. The two guitar necks below it do the same: one in standard tuning, one tuned lower for the bass line. Each note goes on one string, near where that voice's hand already is, and you can press any fret to play it.</p>
       <p>To hear the harmony, pause and turn on <em>Hold chord</em>. Every note under the line keeps sounding until the line leaves it. Drag the line itself, or drag the score under it. <kbd>←</kbd> <kbd>→</kbd> then step from one note to the next, and <kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd> jump a bar. <em>Arpeggio</em> (or <kbd>A</kbd>), which appears next to it, switches on a running arpeggio of the held chord, up and down, that follows the line until you switch it off. <em>Arp</em> sets its speed in notes per second.</p>
       <p>To sing along, turn on <em>Sing</em>, allow the microphone and pick your <em>Voice</em>. The music starts a bar before that voice's next note and plays on without it, in time. Sing its notes, in any octave: your pitch is drawn as a line over the score, and every note you hit in time gets a gold bar underneath. Miss one and the music stops on it, holds the harmony and plays the note for you; it carries on as soon as you sing it (<kbd>Space</kbd> skips it). Notes too quick to sing at the current speed never stop the music, so slow down with <em>Speed</em> to be asked for more of them. <em>Guide</em> plays your voice softly along with you. Use headphones, or the microphone will hear the speakers. <kbd>H</kbd> or a tap on the tag plays the next note. The tag also counts your streak of notes in a row. Sing a voice from its first note to the end and you get a result: one star for finishing, two for 80% of the notes in time, three for 95%. Your best run of each voice is kept on this device and shown as stars on its chip.</p>
-      <p>To learn a line by heart, turn on <em>Fill in</em> and pick your <em>Voice</em>. Some of its notes go missing: they aren't drawn and they aren't played, and neither is any note of another voice that doubles them. A gold band with a question mark shows when a missing note falls, but not where. The music stops there and waits; play the note on the keyboard, in any octave. A wrong key is marked red, and after three the note is given away (<kbd>Space</kbd> gives it away at once). Notes the line itself gives away are never the missing ones: a repeated note, the middle of a scale run, a neighbour note. <em>Blanks</em> sets how many go missing, from <em>Few</em> to <em>All</em>, and every run draws new ones. A run from the beginning to the end is scored like a sung one, by the blanks you got at the first try.</p>
+      <p>To learn a line by heart, turn on <em>Fill in</em> and pick your <em>Voice</em>. Some of its notes go missing: they aren't drawn and they aren't played, and neither is any note of another voice that doubles them. A gold band with a question mark shows when a missing note falls, but not where. The music stops there and waits, and a slider under the lane wakes up with an octave of notes, the missing one somewhere among them. Slide along it to hear each note against the harmony and let go on the right one (with a keyboard: <kbd>←</kbd> <kbd>→</kbd> and <kbd>Enter</kbd>). Letting go is the guess: a wrong note is marked red, and after three the note is given away (<kbd>Space</kbd> gives it away at once). Notes the line itself gives away are never the missing ones: a repeated note, the middle of a scale run, a neighbour note. <em>Blanks</em> sets how many go missing, from <em>Few</em> to <em>All</em>, and every run draws new ones. A run from the beginning to the end is scored like a sung one, by the blanks you got at the first try.</p>
       <p>Now showing: <span class="source" id="srcName">–</span> <span id="srcErr" class="err"></span></p>
     </div>
     <div>
@@ -1312,8 +1335,10 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   // ---------- Fill in the blanks: notes of one voice go missing, and the music waits until you play each one ----------
   // An exercise for knowing a line by heart. The missing notes are neither drawn nor played, and neither are
   // notes of other voices that double them (the flute and the first violins often share a line), so the answer
-  // has to come from memory. When the line reaches a blank the music stops on it and holds the other voices; play
-  // the note on the piano (or a guitar neck), in any octave, and it carries on. Notes that the line itself gives
+  // has to come from memory. When the line reaches a blank the music stops on it and holds the other voices; find
+  // the note on the slider under the lane and it carries on. The slider spans an octave that starts somewhere new
+  // for every blank, so where the note sits tells nothing; sliding sounds each note, and letting go is the guess.
+  // (The piano and the guitar necks, when they're shown, take a guess too, in any octave.) Notes that the line itself gives
   // away are never blanked: a repeat of the note before, the middle of a scale run, a neighbour note that steps
   // out and straight back, or an ornament too short to matter.
   const BLANK_FRAC = { few: 1 / 8, some: 1 / 4, many: 1 / 2, all: 1 };
@@ -1351,7 +1376,69 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     setText("blankCount", r ? `✓ ${r.ok} · ✗ ${r.missed} · ${blankList.filter(t => t.hid).length} to go` : "");
     setText("blankStreak", r && r.streak >= 3 ? `${r.streak} in a row` : "");
     $("blankTag").classList.toggle("waiting", !!blankWait);
+    showGuess();
   }
+
+  // The slider: twelve semitones up from guessLo, so every note name is on it once.
+  const guess = $("guess"), GUESS_ID = "guess";   // GUESS_ID: the slider's "pointer" among the pressed keys
+  let guessFor = null, guessLo = 0, guessAt = -1, guessDrag = null;
+  function showGuess() {
+    const t = blankWait;
+    if (t !== guessFor) {
+      guessFor = t; guessAt = -1; guessDrag = null;
+      liftKey(GUESS_ID);
+      guess.classList.toggle("idle", !t);
+      if (t) {
+        guessLo = t.midi - Math.floor(Math.random() * 12);
+        guess.innerHTML = '<span class="rail-line"></span>' +
+          Array.from({ length: 12 }, (_, i) => `<span class="step" data-pc="${(guessLo + i) % 12}">${NAMES[(guessLo + i) % 12]}</span>`).join("") +
+          '<span class="knob" hidden></span>';
+      } else guess.innerHTML = '<span class="hint">Listen. When the music stops, slide along here and let go on the missing note.</span>';
+    }
+    if (!t) { guess.removeAttribute("aria-valuetext"); return; }
+    const steps = guess.querySelectorAll(".step"), knob = guess.querySelector(".knob");
+    steps.forEach((el, i) => {
+      el.classList.toggle("on", i === guessAt);
+      el.classList.toggle("wrong", blankWrong.has((guessLo + i) % 12));
+    });
+    knob.hidden = guessAt < 0;
+    knob.style.left = `${(guessAt + 0.5) / 12 * 100}%`;
+    knob.classList.toggle("wrong", guessAt >= 0 && blankWrong.has((guessLo + guessAt) % 12));
+    guess.setAttribute("aria-valuenow", String(Math.max(0, guessAt)));
+    guess.setAttribute("aria-valuetext", guessAt < 0 ? "No note yet" : NAMES[(guessLo + guessAt) % 12]);
+  }
+  // Move the knob to a step and sound its note: held under a finger, short from the arrow keys.
+  function guessMove(i, held) {
+    i = Math.max(0, Math.min(11, i));
+    if (held && i === guessAt && pressed.has(GUESS_ID)) return;
+    guessAt = i;
+    if (held) pressKey(GUESS_ID, { m: guessLo + i });
+    else if (ctx) voice(guessLo + i, ctx.currentTime + 0.005, 0.7, 0.8, kindOf(song && song.tracks[leadIdx]), null, master);
+    showGuess();
+  }
+  const guessStep = e => { const r = guess.getBoundingClientRect(); return Math.floor((e.clientX - r.left) / r.width * 12); };
+  guess.addEventListener("pointerdown", e => {
+    if (!blankWait || (e.pointerType === "mouse" && e.button !== 0) || guessDrag != null) return;
+    e.preventDefault();
+    ensureAudio();
+    guess.setPointerCapture(e.pointerId);
+    guessDrag = e.pointerId;
+    guessMove(guessStep(e), true);
+  });
+  guess.addEventListener("pointermove", e => { if (e.pointerId === guessDrag) guessMove(guessStep(e), true); });
+  guess.addEventListener("pointerup", e => {
+    if (e.pointerId !== guessDrag) return;
+    guessDrag = null; liftKey(GUESS_ID);
+    if (guessAt >= 0) blankGuess(guessLo + guessAt);
+  });
+  // A swipe the browser took for scrolling the page is no guess.
+  for (const type of ["pointercancel", "lostpointercapture"]) guess.addEventListener(type, e => { if (e.pointerId === guessDrag) { guessDrag = null; liftKey(GUESS_ID); } });
+  guess.addEventListener("keydown", e => {
+    if (!blankWait) return;
+    const d = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[e.code];
+    if (d) { e.preventDefault(); e.stopPropagation(); ensureAudio(); guessMove(guessAt < 0 ? (d > 0 ? 0 : 11) : guessAt + d, false); }
+    else if (e.code === "Enter" && guessAt >= 0) { e.preventDefault(); e.stopPropagation(); blankGuess(guessLo + guessAt); }
+  });
 
   // A new run from where the line is, with a fresh draw of blanks over the whole voice.
   function blankStart() {
@@ -1411,7 +1498,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     play();   // from the note, which now sounds
   }
 
-  // A key was pressed while the music waits.
+  // A guess while the music waits: the slider was let go, or a key or fret was pressed.
   function blankGuess(m) {
     const t = blankWait;
     if (!t) return;
@@ -1449,17 +1536,16 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
       if (holdMode) setHold(false);
       setSing(false);
       blankOn = true;
-      $("piano").hidden = false;   // the answers go on the keyboard
       blankStart();
     } else {
       blankOn = false; blankWait = null; blankRun = null; blankList = []; blankWrong.clear(); miniDirty = true;
       blankClear();
-      $("piano").hidden = $("showPiano").getAttribute("aria-pressed") !== "true";
       $("result").hidden = true;
       if (playing) { const b = beatNow(); stopAll(); anchor(b); }   // bring the missing notes back in
     }
     $("blank").setAttribute("aria-pressed", String(on));
-    $("blankTag").hidden = !on; $("blankOpts").hidden = !on;
+    $("blankTag").hidden = !on; $("blankOpts").hidden = !on; $("guess").hidden = !on;
+    if (!on) showGuess();
     $("voiceOpts").hidden = !(singOn || blankOn);
   }
 
