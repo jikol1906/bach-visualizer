@@ -1177,6 +1177,9 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   // and holds its chord, a reference tone plays, and the music carries on once you sing the note. Matching is by
   // pitch class, so any octave counts (the flute sits above most voices). Notes too quick to sing at the current
   // speed are left to you: sing them or not, nothing waits on them.
+  // Where the voice has several notes at once (a double stop, a chord in an organ hand) they're all to be sung, one
+  // after another from the lowest up. The lowest is due in time like any note; the music then stops on the chord
+  // and holds it until the rest are sung. Notes an octave apart count as one.
   const SING_MIN_SEC = 0.2;   // notes shorter than this (at the current speed) aren't waited on
   const SING_TOL = 0.55;      // semitones either side of the note
   const SING_EARLY = 0.3;     // seconds before a note starts that singing it already counts
@@ -1190,6 +1193,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   const SING_ANALYSIS = 0.045;
   let singInLat = 0.02, singLag = 0, singFrom = null;
   let singIdx = 0, singOkFor = 0, singTickAt = 0, singLastB = 0, singGate = 0, singWaitAt = 0, singGuided = false;
+  let singStep = 0;           // which note of a chord is due, counting from the lowest
+  let singDue = false;        // the chord's lowest note came in time, and the music waits for the rest of it
   let singRaw = [], singMiss = 0, singHeard = null, singFolded = null, singLastSung = 62, singScore = { ok: 0, waited: 0 };
   const singTrail = [];   // { b, m, gap }: the sung pitch, drawn over the roll and folded to the octave of the notes
   // A run: from where Sing started to the end of the piece. One that starts on the voice's first note and isn't
@@ -1215,11 +1220,20 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   const singNs = () => singTr ? singTr.notes : [];
   const singSync = b => firstAtOrAfter(singNs(), b - 0.01);
   const singAfter = i => { const ns = singNs(); let j = i; while (j < ns.length && ns[j].start - ns[i].start < 1e-3) j++; return j; };
-  const singGroup = i => singNs().slice(i, singAfter(i));   // notes of the voice that start together: any of them will do
+  const singGroup = i => singNs().slice(i, singAfter(i));   // notes of the voice that start together
+  // The notes to sing there, lowest first: one for each note name.
+  const singSteps = i => { const seen = new Set(); return singGroup(i).sort((x, y) => x.midi - y.midi).filter(n => !seen.has(n.midi % 12) && seen.add(n.midi % 12)); };
+  const samePc = (a, b) => (a.midi - b.midi) % 12 === 0;
   const realSec = n => (secAt(n.start + n.dur) - secAt(n.start)) / speed;
   const singNeeded = i => singGroup(i).some(n => realSec(n) >= SING_MIN_SEC);
-  const singOk = i => singHeard != null && singGroup(i).some(n => Math.abs(wrap12(singHeard - n.midi)) < SING_TOL);
-  const singPending = () => singOn && singNs()[singIdx] || null;
+  const singPending = () => singOn && singSteps(singIdx)[singStep] || null;
+  const singOk = () => { const t = singPending(); return singHeard != null && !!t && Math.abs(wrap12(singHeard - t.midi)) < SING_TOL; };
+  const singMark = (t, how) => { for (const n of singGroup(singIdx)) if (samePc(n, t)) n.sung = how; };
+  const singStreak = () => {
+    if (!singRun) return;
+    singRun.top = Math.max(singRun.top, ++singRun.streak);
+    if (STREAK_MARKS.has(singRun.streak)) singPop = { text: `${singRun.streak} in a row!`, at: performance.now() };
+  };
 
   // Pitch of a voice by the YIN method: 0 when it's too quiet or not clearly pitched.
   function detectPitch(x, sr) {
@@ -1275,25 +1289,31 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   // A reference tone for a note, in the octave nearest to where you've been singing (or a middle one).
   function singGuide(n) {
     if (!ctx || !n) return;
-    voice(Math.round(singLastSung + wrap12(n.midi - singLastSung)), ctx.currentTime + 0.02, 0.6, 0.8, kindOf(n.tr), n.tr);
+    // In the octave you're singing in; inside a chord, the next note up from the one before.
+    const near = x => Math.round(singLastSung + wrap12(x.midi - singLastSung));
+    const steps = singSteps(singIdx), k = steps.indexOf(n), below = steps[k - 1];
+    const m = below ? near(below) + (((n.midi - below.midi) % 12) + 12) % 12 : near(n);
+    voice(m, ctx.currentTime + 0.02, 0.6, 0.8, kindOf(n.tr), n.tr);
     singGate = ctx.currentTime + 0.8;   // the microphone ignores the tone (and its reverb)
   }
 
   function showSing() {
-    const t = singPending();
-    setText("singLabel", singWait ? "Sing" : "Next");
+    const t = singPending(), of = singOn ? singSteps(singIdx).length : 0;
+    setText("singLabel", (singWait ? "Sing" : "Next") + (of > 1 ? ` ${singStep + 1}/${of}` : ""));
     setText("singTarget", t ? NAMES[t.midi % 12] : singOn ? "🎉 end" : "–");
     setText("singCount", singOn ? `✓ ${singScore.ok} · waited ${singScore.waited}` : "");
     setText("singStreak", singOn && singRun && singRun.streak >= 3 ? `${singRun.streak} in a row` : "");
     $("singTag").classList.toggle("waiting", !!singWait);
   }
 
-  // Stop on the note and hold the harmony under it until it's sung.
-  function singFreeze(t) {
+  // Stop on the note and hold the harmony under it until it's sung. `rest`: the lowest note of a chord came in
+  // time and the music only stops for the others, which is no miss.
+  function singFreeze(t, rest = false) {
     pause();
     viewBeat = t.start;
     singWait = t; singWaitAt = performance.now() / 1000; singGuided = false; singOkFor = 0;
-    if (singRun) { singRun.missed++; singRun.streak = 0; }
+    singDue = rest;
+    if (singRun && !rest) { singRun.missed++; singRun.streak = 0; }
     showSing();
   }
 
@@ -1341,6 +1361,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   // (The piano and the guitar necks, when they're shown, take a guess too, in any octave.) Notes that the line itself gives
   // away are never blanked: a repeat of the note before, the middle of a scale run, a neighbour note that steps
   // out and straight back, or an ornament too short to matter.
+  // Where the voice has several notes at once, a blank takes the whole chord: its notes are asked for one after
+  // another, lowest first, and each one sounds with the held harmony once it's found. Notes an octave apart count as one.
   const BLANK_FRAC = { few: 1 / 8, some: 1 / 4, many: 1 / 2, all: 1 };
   const BLANK_TRIES = 3;      // wrong guesses before the note is given away
   const BLANK_MIN_RUN = 5;    // a full run with fewer blanks than this earns nothing
@@ -1366,12 +1388,13 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     }
     return out.length >= 4 ? out : ns.slice();
   }
+  const together = (a, b) => Math.abs(a.start - b.start) < 1e-3;
   const blankSync = b => { const i = blankList.findIndex(t => t.hid && t.start >= b - 1e-3); blankIdx = i < 0 ? blankList.length : i; };
   const blankClear = () => { if (song) for (const tr of song.tracks) for (const n of tr.notes) { delete n.hid; delete n.got; delete n.twins; } };
 
   function showBlank() {
-    const r = blankRun;
-    setText("blankLabel", blankWait ? "Which note?" : "Listen");
+    const r = blankRun, t = blankWait, mates = t ? blankList.filter(o => together(o, t)) : [];
+    setText("blankLabel", !t ? "Listen" : mates.length > 1 ? `Which note? ${mates.indexOf(t) + 1}/${mates.length}, lowest first` : "Which note?");
     setText("blankTried", [...blankWrong].map(pc => "✗ " + NAMES[pc]).join(" "));
     setText("blankCount", r ? `✓ ${r.ok} · ✗ ${r.missed} · ${blankList.filter(t => t.hid).length} to go` : "");
     setText("blankStreak", r && r.streak >= 3 ? `${r.streak} in a row` : "");
@@ -1450,19 +1473,24 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [cands[i], cands[j]] = [cands[j], cands[i]]; }
     // Short of "All", blanks keep at least a beat apart, so the music gets going between them.
     const want = Math.max(1, Math.round(cands.length * f)), picked = [];
+    const gap = f < 1 ? 1 : 1e-3, ns = blankTr.notes;
     for (const n of cands) {
       if (picked.length >= want) break;
-      if (f < 1 && picked.some(o => Math.abs(o.start - n.start) < 1)) continue;
-      picked.push(n);
+      if (picked.some(o => Math.abs(o.start - n.start) < gap)) continue;
+      // The note and any that start with it: one blank for each note name, lowest first.
+      const seen = new Set();
+      let i = firstAtOrAfter(ns, n.start - 1e-3), j = i;
+      while (j < ns.length && together(ns[j], n)) j++;
+      for (const o of ns.slice(i, j).sort((x, y) => x.midi - y.midi)) if (!seen.has(o.midi % 12)) { seen.add(o.midi % 12); picked.push(o); }
     }
-    blankList = picked.sort((x, y) => x.start - y.start);
+    blankList = picked.sort((x, y) => (together(x, y) ? 0 : x.start - y.start) || x.midi - y.midi);
+    const asked = new Set(blankList);
     for (const t of blankList) {
       t.hid = true; t.twins = [];
       for (const tr of song.tracks) {
-        if (tr === blankTr) continue;
         for (let i = firstAtOrAfter(tr.notes, t.start - 0.07); i < tr.notes.length && tr.notes[i].start <= t.start + 0.07; i++) {
           const n = tr.notes[i];
-          if ((n.midi - t.midi) % 12 === 0) { n.hid = true; t.twins.push(n); }
+          if (!asked.has(n) && (n.midi - t.midi) % 12 === 0) { n.hid = true; t.twins.push(n); }
         }
       }
     }
@@ -1494,6 +1522,9 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     t.got = first ? 1 : 2;
     blankWait = null; blankWrong.clear(); miniDirty = true;
     viewBeat = t.start;
+    // More of the same chord is missing: the music stays put, with this note now in the held harmony.
+    const next = blankList.find(o => o.hid && together(o, t));
+    if (next) { blankWait = next; showBlank(); return; }
     showBlank();
     play();   // from the note, which now sounds
   }
@@ -1566,39 +1597,46 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     const b = beatHeard(singInLat + SING_ANALYSIS + singLag), ns = singNs();   // the beat you were hearing as you sang this
     // Jumps are spotted on the audio clock, which only jumps when the music does; the judged beat trails it.
     const rb = beatNow();
-    if (!playing && !singWait) singIdx = singSync(b);
-    else if (playing && (rb < singLastB - 0.5 || rb > singLastB + 2)) singIdx = singSync(b);   // looped or jumped
+    if (!playing && !singWait) { singIdx = singSync(b); singStep = 0; singDue = false; }
+    else if (playing && (rb < singLastB - 0.5 || rb > singLastB + 2)) { singIdx = singSync(b); singStep = 0; }   // looped or jumped
     singLastB = rb;
 
     if (singWait) {
       if (!singGuided && now - singWaitAt > 0.5) { singGuided = true; singGuide(singWait); }
-      singOkFor = singOk(singIdx) ? singOkFor + dt : 0;
-      if (singOkFor >= SING_HOLD) { singWait.sung = 2; singScore.waited++; play(); }   // play() moves past the note
+      singOkFor = singOk() ? singOkFor + dt : 0;
+      if (singOkFor >= SING_HOLD) {
+        singMark(singWait, singDue ? 1 : 2);
+        const next = singSteps(singIdx)[singStep + 1];
+        if (next) { singStep++; singWait = next; singWaitAt = now; singGuided = false; singOkFor = 0; }   // on up the chord
+        else {
+          if (singDue) { singScore.ok++; singStreak(); } else singScore.waited++;
+          singDue = false;
+          play();   // play() moves past the note
+        }
+      }
     } else if (playing) {
       for (;;) {
-        const t = ns[singIdx];
+        const t = ns[singIdx], t0 = singPending();
         if (!t) break;
         const until = (secAt(t.start) - secAt(b)) / speed;   // real seconds to the note (negative once it's begun)
-        if (!singNeeded(singIdx)) { if (until > 0) break; singIdx = singAfter(singIdx); singOkFor = 0; continue; }
+        if (!singNeeded(singIdx)) { if (until > 0) break; singIdx = singAfter(singIdx); singStep = 0; singOkFor = 0; continue; }
         if (until > SING_EARLY) break;
-        if (singOk(singIdx)) {
+        if (singOk()) {
           if (!singOkFor) singFrom = until;
           singOkFor += dt;
           if (singOkFor >= SING_CATCH) {
             // Learn the delay from how late the note began. Not from one already held when its window opened
             // (a repeated pitch), which says nothing about timing.
             if (singFrom < SING_EARLY - 0.04) singLag = Math.min(0.35, Math.max(0, singLag + 0.3 * Math.min(0.25, Math.max(-0.1, -singFrom))));
-            for (const n of singGroup(singIdx)) n.sung = 1;
-            singScore.ok++; singIdx = singAfter(singIdx); singOkFor = 0;
-            if (singRun) {
-              singRun.top = Math.max(singRun.top, ++singRun.streak);
-              if (STREAK_MARKS.has(singRun.streak)) singPop = { text: `${singRun.streak} in a row!`, at: performance.now() };
-            }
+            singMark(t0, 1);
+            const next = singSteps(singIdx)[1];
+            if (next) { singStep = 1; singFreeze(next, true); }   // a chord: the music waits for the rest of it
+            else { singScore.ok++; singIdx = singAfter(singIdx); singOkFor = 0; singStreak(); }
             $("singTag").title = `Tap to hear the note (H). Timing allows ${Math.round((outLat() + singInLat + SING_ANALYSIS + singLag) * 1000)} ms for sound to reach you and come back.`;
           }
         } else {
           singOkFor = 0;
-          if (-until > Math.min(SING_GRACE, realSec(t) * 0.6)) singFreeze(t);
+          if (-until > Math.min(SING_GRACE, realSec(t) * 0.6)) singFreeze(t0);
         }
         break;
       }
@@ -1635,7 +1673,7 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
   function singStart() {
     singTr = song.tracks[Number($("singVoice").value)] || song.tracks[0];
     for (const tr of song.tracks) for (const n of tr.notes) delete n.sung;
-    singScore = { ok: 0, waited: 0 }; singTrail.length = 0; singWait = null; singOkFor = 0;
+    singScore = { ok: 0, waited: 0 }; singTrail.length = 0; singWait = null; singOkFor = 0; singStep = 0; singDue = false;
     const i = singSync(beatNow()), t = singNs()[i] || singNs()[0];
     if (t) seek(Math.max(startBeat - 0.25, t.start - song.bars[barIdx(t.start)].len));
     singIdx = singSync(beatNow()); singLastB = beatNow();
@@ -1801,7 +1839,11 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (viewBeat >= endBeat) viewBeat = startBeat - 0.25;
     anchor(viewBeat);
     playing = true;
-    if (singOn) { singIdx = singWait ? singAfter(singIdx) : singSync(viewBeat); singLastB = viewBeat; singOkFor = 0; }   // playing on while waiting skips the note
+    if (singOn) {
+      if (singWait && singDue && singRun) { singRun.missed++; singRun.streak = 0; }   // the rest of a chord, skipped
+      singIdx = singWait ? singAfter(singIdx) : singSync(viewBeat);   // playing on while waiting skips the note
+      singStep = 0; singDue = false; singLastB = viewBeat; singOkFor = 0;
+    }
     singWait = null;
     keepAwake();
     timer = setInterval(schedule, 25);
@@ -1988,8 +2030,8 @@ select:focus-visible { outline: 2px solid var(--gilt-hi); outline-offset: 2px; }
     if (!W || !song) return;
     updateChord();
     const holding = (holdMode || singWait || blankWait) && !playing;
-    const st = singPending();   // the next note to sing (and any that start with it)
-    const isSt = n => st && n.tr === st.tr && Math.abs(n.start - st.start) < 1e-3;
+    const st = singPending();   // the next note to sing (and any an octave from it that start with it)
+    const isSt = n => st && n.tr === st.tr && Math.abs(n.start - st.start) < 1e-3 && samePc(n, st);
     const now = beatHeard();
     const c = g2, lh = laneH(), px = playX();
     c.setTransform(dpr, 0, 0, dpr, 0, 0);

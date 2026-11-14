@@ -169,3 +169,53 @@ test.describe("singing the note late", () => {
     await expect(page.locator("#singTarget")).toHaveText("C♯");
   });
 });
+
+// A piece of the test's own with a chord in it: B and the D above it together, then a D and a B, a beat each
+// at ♩ = 120, after two beats' rest.
+function chordTune() {
+  const ev = [0x00, 0xff, 0x51, 0x03, 0x07, 0xa1, 0x20];
+  [[71, 74], [74], [71]].forEach((ms, i) => {
+    ms.forEach((m, k) => ev.push(...(k || i ? [0x00] : [0x87, 0x40]), 0x90, m, 100));
+    ms.forEach((m, k) => ev.push(...(k ? [0x00] : [0x83, 0x60]), 0x80, m, 64));
+  });
+  ev.push(0x00, 0xff, 0x2f, 0x00);
+  const head = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0, 0x4d, 0x54, 0x72, 0x6b, 0, 0, ev.length >> 8, ev.length & 255];
+  return Buffer.from([...head, ...ev]);
+}
+async function loadChordTune(page) {
+  await page.setInputFiles("#midi", { name: "chord.mid", mimeType: "audio/midi", buffer: chordTune() });
+  await expect(page.locator("#mvTitle")).toHaveText("chord");
+}
+
+test.describe("a chord in the voice, with silence", () => {
+  test.use({ mic: { parts: [{ seconds: 2 }] } });
+
+  test("asks for its lowest note first, and Space skips the whole chord", async ({ page }) => {
+    await loadChordTune(page);
+    await page.click("#sing");
+    await expect(tag(page)).toHaveClass(/waiting/, { timeout: 5000 });
+    await expect(page.locator("#singLabel")).toHaveText("Sing 1/2");
+    await expect(page.locator("#singTarget")).toHaveText("B");
+    await page.keyboard.press("Space");
+    await expect(tag(page)).toHaveClass(/waiting/, { timeout: 5000 });
+    await expect(page.locator("#singLabel")).toHaveText("Sing");
+    await expect(page.locator("#singTarget")).toHaveText("D");
+  });
+});
+
+test.describe("a chord in the voice, sung from the bottom up", () => {
+  test.use({ mic: { parts: [{ seconds: 7, hz: B4 }, { seconds: 20, hz: hz(74) }] } });
+
+  test("the music stops on it until every note is sung, and it counts once", async ({ page }) => {
+    await loadChordTune(page);
+    await page.click("#sing");
+    // The B comes in time, but the chord isn't done: the music waits for the D.
+    await expect(page.locator("#singLabel")).toHaveText("Sing 2/2", { timeout: 5000 });
+    await expect(page.locator("#singTarget")).toHaveText("D");
+    await expect(page.locator("#singCount")).toHaveText("✓ 0 · waited 0");
+    await expect(page.locator("#play")).toHaveText("Play");
+    // Once the D is heard the chord counts as sung in time, and so does the D after it.
+    await expect(page.locator("#singCount")).toHaveText("✓ 2 · waited 0", { timeout: 12000 });
+    await expect(page.locator("#singTarget")).toHaveText("B");
+  });
+});

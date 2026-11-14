@@ -116,3 +116,43 @@ test("sliding only listens: the guess is where the slider is let go", async ({ p
   await page.keyboard.press("Enter");
   await expect(page.locator("#blankCount")).toHaveText("✓ 2 · ✗ 0 · 4 to go");
 });
+
+// C, then a chord (E with the E an octave below it, and G), then C and G: a beat each, after two beats' rest.
+function chordTune() {
+  const ev = [0x00, 0xff, 0x51, 0x03, 0x07, 0xa1, 0x20];
+  [[60], [52, 64, 67], [72], [67]].forEach((ms, i) => {
+    ms.forEach((m, k) => ev.push(...(k || i ? [0x00] : [0x87, 0x40]), 0x90, m, 100));
+    ms.forEach((m, k) => ev.push(...(k ? [0x00] : [0x83, 0x60]), 0x80, m, 64));
+  });
+  ev.push(0x00, 0xff, 0x2f, 0x00);
+  const head = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0, 0x4d, 0x54, 0x72, 0x6b, 0, 0, ev.length >> 8, ev.length & 255];
+  return Buffer.from([...head, ...ev]);
+}
+
+test("a chord in the voice is asked for note by note, lowest first", async ({ page }) => {
+  await open(page);
+  await page.setInputFiles("#midi", { name: "chord.mid", mimeType: "audio/midi", buffer: chordTune() });
+  await expect(page.locator("#mvTitle")).toHaveText("chord");
+  await page.click("#blank");
+  await page.selectOption("#blankHow", "all");
+  // Five blanks: the two E's of the chord are one.
+  await expect(page.locator("#blankCount")).toHaveText("✓ 0 · ✗ 0 · 5 to go");
+  await waiting(page);
+  await expect(page.locator("#blankLabel")).toHaveText("Which note?");
+  await press(page, "C");
+  await waiting(page);
+  await expect(page.locator("#blankLabel")).toHaveText("Which note? 1/2, lowest first");
+  // G is in the chord, but E comes first.
+  await press(page, "G");
+  await expect(page.locator("#blankTried")).toHaveText("✗ G");
+  await press(page, "E");
+  // The music stays where it is for the rest of the chord.
+  await expect(page.locator("#blankLabel")).toHaveText("Which note? 2/2, lowest first");
+  await expect(page.locator("#blankCount")).toHaveText("✓ 1 · ✗ 1 · 3 to go");
+  await expect(page.locator("#blankTag")).toHaveClass(/waiting/);
+  await expect(page.locator("#play")).toHaveText("Play");
+  await press(page, "G");
+  await expect(page.locator("#blankCount")).toHaveText("✓ 2 · ✗ 1 · 2 to go");
+  await waiting(page);
+  await expect(page.locator("#blankLabel")).toHaveText("Which note?");
+});
