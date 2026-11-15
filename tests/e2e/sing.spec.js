@@ -219,3 +219,65 @@ test.describe("a chord in the voice, sung from the bottom up", () => {
     await expect(page.locator("#singTarget")).toHaveText("B");
   });
 });
+
+// A piece of the test's own for Notes: B up to E and back down, four times over, a beat each at ♩ = 120,
+// after two beats' rest. Every note is a leap, so any of them can go missing.
+function leaps() {
+  const ev = [0x00, 0xff, 0x51, 0x03, 0x07, 0xa1, 0x20];
+  for (let i = 0; i < 8; i++) { const m = i % 2 ? 76 : 71; ev.push(...(i ? [0x00] : [0x87, 0x40]), 0x90, m, 100, 0x83, 0x60, 0x80, m, 64); }
+  ev.push(0x00, 0xff, 0x2f, 0x00);
+  const head = [0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0, 0x4d, 0x54, 0x72, 0x6b, 0, 0, ev.length >> 8, ev.length & 255];
+  return Buffer.from([...head, ...ev]);
+}
+
+test.describe("Notes: only some of the voice's notes to sing", () => {
+  test.use({ mic: { parts: [{ seconds: 2 }] } });
+
+  test("the voice plays on, and the music only stops on the notes that went missing, without naming them", async ({ page }) => {
+    await page.setInputFiles("#midi", { name: "leaps.mid", mimeType: "audio/midi", buffer: leaps() });
+    await expect(page.locator("#mvTitle")).toHaveText("leaps");
+    await page.click("#sing");
+    await expect(page.locator("#singHow")).toHaveValue("all");
+    await expect(page.locator("#singGuide")).toBeVisible();
+    await page.selectOption("#singHow", "many");
+    await expect(page.locator("#singGuide")).toBeHidden();   // the voice plays itself now
+    // Half of the eight notes are asked for: skipping each one, the music stops four times and then ends.
+    let stops = 0;
+    for (let i = 0; i < 150 && await page.locator("#result").isHidden(); i++) {
+      if (await tag(page).evaluate(el => el.classList.contains("waiting"))) {
+        await expect(page.locator("#singTarget")).toHaveText("?");
+        stops++;
+        await page.keyboard.press("Space");
+      }
+      await page.waitForTimeout(100);
+    }
+    expect(stops).toBe(4);
+    await expect(page.locator("#result")).toBeVisible();
+    await expect(page.locator("#resDetail")).toHaveText("0 of 4 notes · 0 in a row · speed 100%");
+    // Back on All, every note is asked for again, by name.
+    await page.click("#resDone");
+    await page.click("#sing");
+    await page.selectOption("#singHow", "all");
+    await expect(tag(page)).toHaveClass(/waiting/, { timeout: 5000 });
+    await expect(page.locator("#singTarget")).toHaveText("B");
+  });
+});
+
+test.describe("Notes: singing a missing note", () => {
+  test.use({ mic: { parts: [{ seconds: 30, hz: B4 }] } });
+
+  test("counts it, and the ones on another pitch still stop the music", async ({ page }) => {
+    await page.setInputFiles("#midi", { name: "leaps.mid", mimeType: "audio/midi", buffer: leaps() });
+    await expect(page.locator("#mvTitle")).toHaveText("leaps");
+    await page.click("#sing");
+    await page.selectOption("#singHow", "many");
+    // Whatever was drawn, the four missing notes are B's (sung in time) or E's (the music waits; skip them).
+    let stops = 0;
+    for (let i = 0; i < 150 && await page.locator("#result").isHidden(); i++) {
+      if (await tag(page).evaluate(el => el.classList.contains("waiting"))) { stops++; await page.keyboard.press("Space"); }
+      await page.waitForTimeout(100);
+    }
+    await expect(page.locator("#result")).toBeVisible();
+    await expect(page.locator("#resDetail")).toContainText(`${4 - stops} of 4 notes · `);
+  });
+});
